@@ -34,6 +34,7 @@
   "homepage": "https://github.com/Choochmeque/tauri-plugin-notifications#readme",
   "scripts": {
     "build": "rollup -c",
+    "prepare": "pnpm build",
     "prepublishOnly": "pnpm build",
     "pretest": "pnpm build",
     "test": "vitest run",
