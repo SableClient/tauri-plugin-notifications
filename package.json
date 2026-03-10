@@ -1,9 +1,9 @@
 {
-  "name": "@choochmeque/tauri-plugin-notifications-api",
+  "name": "@sableclient/tauri-plugin-notifications-api",
   "version": "0.4.3",
   "license": "MIT",
   "author": "You",
-  "description": "A Tauri v2 plugin for sending notifications on desktop and mobile platforms with support for system notifications and push delivery via FCM and APNs.",
+  "description": "A Tauri v2 plugin for sending notifications on desktop and mobile platforms with support for system notifications and push delivery via FCM, APNs and UnifiedPush.",
   "type": "module",
   "types": "./dist-js/index.d.ts",
   "main": "./dist-js/index.cjs",
@@ -22,16 +22,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Choochmeque/tauri-plugin-notifications.git"
+    "url": "git+https://github.com/SableClient/tauri-plugin-notifications.git"
   },
   "keywords": [
     "tauri",
     "notifications"
   ],
   "bugs": {
-    "url": "https://github.com/Choochmeque/tauri-plugin-notifications/issues"
+    "url": "https://github.com/SableClient/tauri-plugin-notifications/issues"
   },
-  "homepage": "https://github.com/Choochmeque/tauri-plugin-notifications#readme",
+  "homepage": "https://github.com/SableClient/tauri-plugin-notifications#readme",
   "scripts": {
     "build": "rollup -c",
     "prepare": "pnpm build",
