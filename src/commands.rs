@@ -59,7 +59,10 @@ pub async fn unregister_for_push_notifications<R: Runtime>(
     }
 }
 
-#[cfg(all(desktop, target_os = "linux", feature = "push-notifications"))]
+#[cfg(all(
+    feature = "push-notifications",
+    any(all(desktop, target_os = "linux"), target_os = "android")
+))]
 #[command]
 pub async fn list_distributors<R: Runtime>(
     _app: AppHandle<R>,
@@ -68,7 +71,10 @@ pub async fn list_distributors<R: Runtime>(
     notification.list_distributors().await
 }
 
-#[cfg(all(desktop, target_os = "linux", feature = "push-notifications"))]
+#[cfg(all(
+    feature = "push-notifications",
+    any(all(desktop, target_os = "linux"), target_os = "android")
+))]
 #[command]
 pub async fn set_distributor<R: Runtime>(
     _app: AppHandle<R>,
@@ -78,7 +84,10 @@ pub async fn set_distributor<R: Runtime>(
     notification.set_distributor(name).await
 }
 
-#[cfg(all(desktop, target_os = "linux", feature = "push-notifications"))]
+#[cfg(all(
+    feature = "push-notifications",
+    any(all(desktop, target_os = "linux"), target_os = "android")
+))]
 #[command]
 pub async fn set_token<R: Runtime>(
     _app: AppHandle<R>,

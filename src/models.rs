@@ -18,6 +18,12 @@ pub struct PushNotificationResponse {
     pub device_token: String,
 }
 
+#[cfg(all(target_os = "android", feature = "push-notifications"))]
+#[derive(Debug, Deserialize)]
+pub struct DistributorsResponse {
+    pub distributors: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {
