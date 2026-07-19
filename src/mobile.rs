@@ -4,10 +4,9 @@ use tauri::{
     plugin::{PermissionState, PluginApi, PluginHandle},
 };
 
-#[cfg(feature = "push-notifications")]
-use crate::models::PushNotificationResponse;
 use crate::models::{
     ActionType, ActiveNotification, Channel, PendingNotification, PermissionResponse,
+    PushNotificationResponse,
 };
 
 use std::collections::HashMap;
@@ -60,20 +59,29 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
-    pub async fn register_for_push_notifications(&self) -> crate::Result<String> {
+    pub async fn register_for_push_notifications(
+        &self,
+        vapid: Option<String>,
+    ) -> crate::Result<PushNotificationResponse> {
         #[cfg(feature = "push-notifications")]
         {
+            #[derive(serde::Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct RegisterArgs {
+                #[serde(skip_serializing_if = "Option::is_none")]
+                vapid: Option<String>,
+            }
             self.0
                 .run_mobile_plugin_async::<PushNotificationResponse>(
                     "registerForPushNotifications",
-                    (),
+                    RegisterArgs { vapid },
                 )
                 .await
-                .map(|r| r.device_token)
                 .map_err(Into::into)
         }
         #[cfg(not(feature = "push-notifications"))]
         {
+            let _ = vapid;
             Err(crate::Error::Io(std::io::Error::other(
                 "Push notifications feature is not enabled",
             )))

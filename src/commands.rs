@@ -40,8 +40,9 @@ pub async fn request_permission<R: Runtime>(
 pub async fn register_for_push_notifications<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
-) -> Result<String> {
-    notification.register_for_push_notifications().await
+    vapid: Option<String>,
+) -> Result<crate::models::PushNotificationResponse> {
+    notification.register_for_push_notifications(vapid).await
 }
 
 #[command]

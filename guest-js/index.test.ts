@@ -474,16 +474,17 @@ describe("Notification Functions", () => {
   });
 
   describe("registerForPushNotifications", () => {
-    it("should call invoke and return push token", async () => {
-      const mockToken = "abc123token";
-      mockInvoke.mockResolvedValue(mockToken);
+    it("should call invoke and return the registration", async () => {
+      const registration = { deviceToken: "abc123token" };
+      mockInvoke.mockResolvedValue(registration);
 
-      const result = await registerForPushNotifications();
+      const result = await registerForPushNotifications("vapid-key");
 
       expect(mockInvoke).toHaveBeenCalledWith(
         "plugin:notifications|register_for_push_notifications",
+        { vapid: "vapid-key" },
       );
-      expect(result).toBe(mockToken);
+      expect(result).toBe(registration);
     });
   });
 

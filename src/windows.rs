@@ -825,8 +825,13 @@ impl<R: Runtime> Notifications<R> {
         self.permission_state().await
     }
 
-    pub async fn register_for_push_notifications(&self) -> crate::Result<String> {
-        self.plugin.open_push_channel()
+    pub async fn register_for_push_notifications(
+        &self,
+        _vapid: Option<String>,
+    ) -> crate::Result<PushNotificationResponse> {
+        self.plugin
+            .open_push_channel()
+            .map(PushNotificationResponse::from_token)
     }
 
     pub fn unregister_for_push_notifications(&self) -> crate::Result<()> {
