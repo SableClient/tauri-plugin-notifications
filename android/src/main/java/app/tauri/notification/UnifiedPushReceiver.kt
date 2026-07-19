@@ -8,7 +8,11 @@ import org.unifiedpush.android.connector.data.PushMessage
 
 class UnifiedPushReceiver : MessagingReceiver() {
     override fun onNewEndpoint(context: Context, endpoint: PushEndpoint, instance: String) {
-        NotificationPlugin.instance?.onUnifiedPushNewEndpoint(endpoint.url)
+        NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
+            endpoint.url,
+            endpoint.pubKeySet?.pubKey,
+            endpoint.pubKeySet?.auth,
+        )
     }
 
     override fun onRegistrationFailed(context: Context, reason: FailedReason, instance: String) {

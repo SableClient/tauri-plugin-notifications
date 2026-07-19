@@ -60,6 +60,11 @@ class RegisterActionTypesArgs {
 }
 
 @InvokeArg
+class RegisterPushArgs {
+  var vapid: String? = null
+}
+
+@InvokeArg
 class SetClickListenerActiveArgs {
   var active: Boolean = false
 }
@@ -94,6 +99,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   private var pendingTokenInvoke: Invoke? = null
   private var cachedToken: String? = null
+  private var vapid: String? = null
 
   // Click listener tracking for cold-start support
   private var hasClickedListener = false
@@ -391,6 +397,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
+    invoke.parseArgs(RegisterPushArgs::class.java).vapid?.let { vapid = it }
+
     // First check if notifications are enabled
     if (!manager.areNotificationsEnabled()) {
       // Request permissions first
@@ -411,6 +419,25 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   }
 
   private fun proceedPushRegistration(invoke: Invoke) {
+    val webPushVapid = vapid
+    if (webPushVapid != null) {
+      pendingTokenInvoke = invoke
+      UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { success ->
+        if (!success) {
+          pendingTokenInvoke?.reject("No UnifiedPush distributor available")
+          pendingTokenInvoke = null
+          return@tryUseCurrentOrDefaultDistributor
+        }
+        try {
+          UnifiedPush.register(activity, "default", vapid = webPushVapid)
+        } catch (error: Exception) {
+          pendingTokenInvoke?.reject(error.message ?: "UnifiedPush registration failed")
+          pendingTokenInvoke = null
+        }
+      }
+      return
+    }
+
     if (UnifiedPush.getSavedDistributor(activity) != null) {
       pendingTokenInvoke = invoke
       UnifiedPush.register(activity, "default")
@@ -490,15 +517,19 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     invoke.resolve()
   }
 
-  fun onUnifiedPushNewEndpoint(endpoint: String) {
+  fun onUnifiedPushNewEndpoint(endpoint: String, p256dh: String?, auth: String?) {
     cachedToken = endpoint
     val result = JSObject()
     result.put("deviceToken", endpoint)
+    p256dh?.let { result.put("p256dh", it) }
+    auth?.let { result.put("auth", it) }
     pendingTokenInvoke?.resolve(result)
     pendingTokenInvoke = null
 
     val data = JSObject()
     data.put("token", endpoint)
+    p256dh?.let { data.put("p256dh", it) }
+    auth?.let { data.put("auth", it) }
     trigger("push-token", data)
   }
 
