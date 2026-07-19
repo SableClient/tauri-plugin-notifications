@@ -73,6 +73,7 @@ dependencies {
 
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
+    implementation("org.unifiedpush.android:connector:3.3.3")
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk-android:1.14.11")
     testImplementation("io.mockk:mockk-agent:1.14.11")

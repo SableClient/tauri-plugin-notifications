@@ -95,6 +95,35 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    #[cfg(all(target_os = "android", feature = "push-notifications"))]
+    pub async fn list_distributors(&self) -> crate::Result<Vec<String>> {
+        self.0
+            .run_mobile_plugin_async::<crate::models::DistributorsResponse>("listDistributors", ())
+            .await
+            .map(|r| r.distributors)
+            .map_err(Into::into)
+    }
+
+    #[cfg(all(target_os = "android", feature = "push-notifications"))]
+    pub async fn set_distributor(&self, name: String) -> crate::Result<()> {
+        let mut args = HashMap::new();
+        args.insert("distributor", name);
+        self.0
+            .run_mobile_plugin_async::<()>("setDistributor", args)
+            .await
+            .map_err(Into::into)
+    }
+
+    #[cfg(all(target_os = "android", feature = "push-notifications"))]
+    pub async fn set_token(&self, token: String) -> crate::Result<()> {
+        let mut args = HashMap::new();
+        args.insert("token", token);
+        self.0
+            .run_mobile_plugin_async::<()>("setToken", args)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn permission_state(&self) -> crate::Result<PermissionState> {
         self.0
             .run_mobile_plugin_async::<PermissionResponse>("checkPermissions", ())

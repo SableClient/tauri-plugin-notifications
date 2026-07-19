@@ -316,11 +316,20 @@ pub fn init<R: Runtime>() -> TauriPlugin<R, Option<PluginConfig>> {
             listeners::register_listener,
             #[cfg(desktop)]
             listeners::remove_listener,
-            #[cfg(all(desktop, target_os = "linux", feature = "push-notifications"))]
+            #[cfg(all(
+                feature = "push-notifications",
+                any(all(desktop, target_os = "linux"), target_os = "android")
+            ))]
             commands::list_distributors,
-            #[cfg(all(desktop, target_os = "linux", feature = "push-notifications"))]
+            #[cfg(all(
+                feature = "push-notifications",
+                any(all(desktop, target_os = "linux"), target_os = "android")
+            ))]
             commands::set_distributor,
-            #[cfg(all(desktop, target_os = "linux", feature = "push-notifications"))]
+            #[cfg(all(
+                feature = "push-notifications",
+                any(all(desktop, target_os = "linux"), target_os = "android")
+            ))]
             commands::set_token,
         ])
         .setup(|app, api| {

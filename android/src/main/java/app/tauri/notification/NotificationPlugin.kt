@@ -20,6 +20,7 @@ import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
+import org.unifiedpush.android.connector.UnifiedPush
 
 const val LOCAL_NOTIFICATIONS = "permissionState"
 
@@ -61,6 +62,11 @@ class RegisterActionTypesArgs {
 @InvokeArg
 class SetClickListenerActiveArgs {
   var active: Boolean = false
+}
+
+@InvokeArg
+class DistributorArgs {
+  var distributor: String? = null
 }
 
 @InvokeArg
@@ -401,7 +407,16 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       }
     }
 
-    // If we already have a cached token, return it immediately
+    proceedPushRegistration(invoke)
+  }
+
+  private fun proceedPushRegistration(invoke: Invoke) {
+    if (UnifiedPush.getSavedDistributor(activity) != null) {
+      pendingTokenInvoke = invoke
+      UnifiedPush.register(activity, "default")
+      return
+    }
+
     cachedToken?.let {
       val result = JSObject()
       result.put("deviceToken", it)
@@ -409,10 +424,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    // Store the invoke to respond later when we get the token
     pendingTokenInvoke = invoke
-
-    // Request the FCM token
     getFirebaseToken()
   }
 
@@ -420,6 +432,13 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun unregisterForPushNotifications(invoke: Invoke) {
     if (!BuildConfig.ENABLE_PUSH_NOTIFICATIONS) {
       invoke.reject("Push notifications are disabled in this build")
+      return
+    }
+
+    if (UnifiedPush.getSavedDistributor(activity) != null) {
+      UnifiedPush.unregister(activity, "default")
+      cachedToken = null
+      invoke.resolve()
       return
     }
 
@@ -441,8 +460,63 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    // Permissions granted, now get the token
-    getFirebaseToken()
+    proceedPushRegistration(invoke)
+  }
+
+  @Command
+  fun listDistributors(invoke: Invoke) {
+    val distributors = UnifiedPush.getDistributors(activity)
+    val result = JSObject()
+    val arr = JSArray()
+    distributors.forEach { arr.put(it) }
+    result.put("distributors", arr)
+    invoke.resolve(result)
+  }
+
+  @Command
+  fun setDistributor(invoke: Invoke) {
+    val args = invoke.parseArgs(DistributorArgs::class.java)
+    val distributor = args.distributor
+    if (distributor == null) {
+      invoke.reject("Distributor parameter is required")
+      return
+    }
+    UnifiedPush.saveDistributor(activity, distributor)
+    invoke.resolve()
+  }
+
+  @Command
+  fun setToken(invoke: Invoke) {
+    invoke.resolve()
+  }
+
+  fun onUnifiedPushNewEndpoint(endpoint: String) {
+    cachedToken = endpoint
+    val result = JSObject()
+    result.put("deviceToken", endpoint)
+    pendingTokenInvoke?.resolve(result)
+    pendingTokenInvoke = null
+
+    val data = JSObject()
+    data.put("token", endpoint)
+    trigger("push-token", data)
+  }
+
+  fun onUnifiedPushRegistrationFailed(reason: String?) {
+    pendingTokenInvoke?.reject(reason ?: "UnifiedPush registration failed")
+    pendingTokenInvoke = null
+  }
+
+  fun onUnifiedPushUnregistered() {
+    pendingTokenInvoke?.resolve(JSObject())
+    pendingTokenInvoke = null
+    cachedToken = null
+  }
+
+  fun onUnifiedPushMessage(content: String) {
+    val data = JSObject()
+    data.put("message", content)
+    trigger("push-message", data)
   }
 
   private fun getFirebaseToken() {
