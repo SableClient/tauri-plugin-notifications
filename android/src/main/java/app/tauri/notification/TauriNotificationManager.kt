@@ -466,6 +466,7 @@ class NotificationDismissReceiver : BroadcastReceiver() {
       val notificationStorage = NotificationStorage(context, ObjectMapper())
       notificationStorage.deleteNotification(intExtra.toString())
     }
+    NotificationPlugin.instance?.onNotificationDismissed(intExtra)
   }
 }
 

@@ -41,8 +41,17 @@ pub async fn register_for_push_notifications<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     vapid: Option<String>,
+    provider: Option<String>,
 ) -> Result<crate::models::PushNotificationResponse> {
-    notification.register_for_push_notifications(vapid).await
+    #[cfg(mobile)]
+    return notification
+        .register_for_push_notifications(vapid, provider)
+        .await;
+    #[cfg(desktop)]
+    {
+        let _ = provider;
+        notification.register_for_push_notifications(vapid).await
+    }
 }
 
 #[command]
@@ -141,6 +150,15 @@ pub fn set_click_listener_active<R: Runtime>(
     active: bool,
 ) -> Result<()> {
     notification.set_click_listener_active(active)
+}
+
+#[command]
+pub fn set_action_listener_active<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+    active: bool,
+) -> Result<()> {
+    notification.set_action_listener_active(active)
 }
 
 #[command]

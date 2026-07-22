@@ -1022,6 +1022,10 @@ impl<R: Runtime> Notifications<R> {
         self.plugin.set_click_listener(active)
     }
 
+    pub const fn set_action_listener_active(&self, _active: bool) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// Create a notification channel (not supported on Windows).
     pub fn create_channel(&self, _channel: crate::Channel) -> crate::Result<()> {
         Err(crate::Error::Io(std::io::Error::other(

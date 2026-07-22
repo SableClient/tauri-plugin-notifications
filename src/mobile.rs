@@ -62,6 +62,7 @@ impl<R: Runtime> Notifications<R> {
     pub async fn register_for_push_notifications(
         &self,
         vapid: Option<String>,
+        provider: Option<String>,
     ) -> crate::Result<PushNotificationResponse> {
         #[cfg(feature = "push-notifications")]
         {
@@ -70,18 +71,20 @@ impl<R: Runtime> Notifications<R> {
             struct RegisterArgs {
                 #[serde(skip_serializing_if = "Option::is_none")]
                 vapid: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                provider: Option<String>,
             }
             self.0
                 .run_mobile_plugin_async::<PushNotificationResponse>(
                     "registerForPushNotifications",
-                    RegisterArgs { vapid },
+                    RegisterArgs { vapid, provider },
                 )
                 .await
                 .map_err(Into::into)
         }
         #[cfg(not(feature = "push-notifications"))]
         {
-            let _ = vapid;
+            let _ = (vapid, provider);
             Err(crate::Error::Io(std::io::Error::other(
                 "Push notifications feature is not enabled",
             )))
@@ -248,6 +251,16 @@ impl<R: Runtime> Notifications<R> {
         args.insert("active", active);
         self.0
             .run_mobile_plugin("setClickListenerActive", args)
+            .map_err(Into::into)
+    }
+
+    /// Set action listener active state.
+    /// Used internally to queue action results until JS is ready.
+    pub fn set_action_listener_active(&self, active: bool) -> crate::Result<()> {
+        let mut args = HashMap::new();
+        args.insert("active", active);
+        self.0
+            .run_mobile_plugin("setActionListenerActive", args)
             .map_err(Into::into)
     }
 }
