@@ -153,6 +153,14 @@ struct SetClickListenerActiveArgs: Decodable {
   let active: Bool
 }
 
+struct SetActionListenerActiveArgs: Decodable {
+  let active: Bool
+}
+
+struct PluginConfig: Decodable {
+  let actionTypes: [ActionType]?
+}
+
 class NotificationPlugin: Plugin {
   let notificationHandler = NotificationHandler()
   let notificationManager = NotificationManager()
@@ -172,6 +180,11 @@ class NotificationPlugin: Plugin {
 
   public override func load(webview: WKWebView) {
     super.load(webview: webview)
+
+    if let config = try? parseConfig(PluginConfig.self),
+       let actionTypes = config.actionTypes {
+      makeCategories(actionTypes)
+    }
 
     #if ENABLE_PUSH_NOTIFICATIONS
       // Store reference to this plugin for event triggering
@@ -385,6 +398,16 @@ class NotificationPlugin: Plugin {
     do {
       let args = try invoke.parseArgs(SetClickListenerActiveArgs.self)
       notificationHandler.setClickListenerActive(args.active)
+      invoke.resolve()
+    } catch {
+      invoke.reject(error.localizedDescription)
+    }
+  }
+
+  @objc func setActionListenerActive(_ invoke: Invoke) {
+    do {
+      let args = try invoke.parseArgs(SetActionListenerActiveArgs.self)
+      notificationHandler.setActionListenerActive(args.active)
       invoke.resolve()
     } catch {
       invoke.reject(error.localizedDescription)

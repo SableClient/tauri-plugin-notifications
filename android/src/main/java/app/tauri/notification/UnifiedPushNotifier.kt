@@ -99,6 +99,7 @@ object UnifiedPushNotifier {
             put("room_id", roomId)
             put("event_id", eventId)
             if (userId.isNotEmpty()) put("user_id", userId)
+            put("instance", UnifiedPushStateStore.INSTANCE)
         }
         val sourceJson = JSONObject().apply {
             put("id", notifId)

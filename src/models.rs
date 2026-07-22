@@ -19,6 +19,8 @@ pub struct PushNotificationResponse {
     pub p256dh: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
 }
 
 impl PushNotificationResponse {
@@ -28,6 +30,7 @@ impl PushNotificationResponse {
             device_token,
             p256dh: None,
             auth: None,
+            instance: None,
         }
     }
 }

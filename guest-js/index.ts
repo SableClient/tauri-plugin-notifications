@@ -359,6 +359,27 @@ interface ActiveNotification {
   sound?: string;
 }
 
+/** Data received when an action is performed on a notification. */
+interface ActionPerformedData {
+  /** Identifier of the selected action, or `tap`/`dismiss` for system actions. */
+  actionId: string;
+  /** Text entered for an action with `input: true`. */
+  inputValue?: string;
+  /** The notification, including its action type and extra metadata. */
+  notification: ActionNotification;
+}
+
+/** Notification data included with an action result. Platform-specific fields are optional. */
+interface ActionNotification {
+  /** Numeric local notification ID, or -1 when a provider notification has no numeric ID. */
+  id: number;
+  title?: string;
+  body?: string;
+  actionTypeId?: string;
+  extra?: Record<string, unknown>;
+  source?: "local" | "push";
+}
+
 /**
  * The importance level of a notification channel (Android).
  */
@@ -445,7 +466,10 @@ interface PushRegistration {
   deviceToken: string;
   p256dh?: string;
   auth?: string;
+  instance?: string;
 }
+
+type PushProvider = "auto" | "fcm" | "unifiedpush";
 
 /**
  * Registers the app for push notifications.
@@ -458,9 +482,11 @@ interface PushRegistration {
  */
 async function registerForPushNotifications(
   vapid?: string,
+  provider: PushProvider = "auto",
 ): Promise<PushRegistration> {
   return await invoke("plugin:notifications|register_for_push_notifications", {
     vapid,
+    provider,
   });
 }
 
@@ -811,13 +837,62 @@ async function onNotificationReceived(
  * // unlisten();
  * ```
  *
- * @param cb - Callback function to handle notification actions.
+ * @param cb - Callback function to handle notification action results.
  * @returns A promise resolving to a function that removes the listener.
  */
 async function onAction(
-  cb: (notification: Options) => void,
+  cb: (action: ActionPerformedData) => void,
 ): Promise<PluginListener> {
-  return await addPluginListener("notifications", "actionPerformed", cb);
+  const listener = await addPluginListener(
+    "notifications",
+    "actionPerformed",
+    cb,
+  );
+  try {
+    await withActionListenerLock(async () => {
+      if (actionListenerCount === 0) {
+        await invoke("plugin:notifications|set_action_listener_active", {
+          active: true,
+        });
+      }
+      actionListenerCount += 1;
+    });
+  } catch (error) {
+    await listener.unregister();
+    throw error;
+  }
+
+  let unregistered = false;
+  return {
+    unregister: async () => {
+      if (unregistered) return;
+      await withActionListenerLock(async () => {
+        if (actionListenerCount > 1) {
+          actionListenerCount -= 1;
+          return;
+        }
+        // Keep the final listener until native deactivation succeeds.
+        await invoke("plugin:notifications|set_action_listener_active", {
+          active: false,
+        });
+        actionListenerCount = 0;
+      });
+      unregistered = true;
+      await listener.unregister();
+    },
+  } as PluginListener;
+}
+
+let actionListenerCount = 0;
+let actionListenerLock = Promise.resolve();
+
+function withActionListenerLock<T>(operation: () => Promise<T>): Promise<T> {
+  const result = actionListenerLock.then(operation, operation);
+  actionListenerLock = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 /**
@@ -885,7 +960,10 @@ export type {
   Channel,
   ScheduleInterval,
   NotificationClickedData,
+  ActionPerformedData,
+  ActionNotification,
   PushRegistration,
+  PushProvider,
 };
 
 export {
