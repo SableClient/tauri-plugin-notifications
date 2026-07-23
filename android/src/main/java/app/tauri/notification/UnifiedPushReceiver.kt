@@ -6,8 +6,14 @@ import org.unifiedpush.android.connector.MessagingReceiver
 import org.unifiedpush.android.connector.UnifiedPush
 import org.unifiedpush.android.connector.data.PushEndpoint
 import org.unifiedpush.android.connector.data.PushMessage
+import org.unifiedpush.android.connector.keys.KeyManager
 
 class UnifiedPushReceiver : MessagingReceiver() {
+
+    override fun getKeyManager(context: Context): KeyManager {
+        return CachedKeyManager.getInstance(context)
+    }
+
     override fun onNewEndpoint(context: Context, endpoint: PushEndpoint, instance: String) {
         NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
             endpoint.url,

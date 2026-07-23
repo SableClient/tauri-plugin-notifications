@@ -23,13 +23,16 @@ internal class UnifiedPushStateStore(private val context: Context) {
     prefs.edit().remove("push-instance").remove("up-endpoint").apply()
   }
   fun instanceForRegistration(): String {
-    activeInstance?.let { return it }
-    if (activeProvider == "unifiedpush") return INSTANCE
-    return UUID.randomUUID().toString().also { activeInstance = it }
+    val current = activeInstance
+    if (current != null && current != INSTANCE) {
+      try { UnifiedPush.unregister(context, current) } catch (_: Exception) {}
+      activeInstance = INSTANCE
+    }
+    return INSTANCE
   }
   fun ensureExplicitInstance() {
     if (prefs.getString("push-instance", null) == null) {
-      activeInstance = UUID.randomUUID().toString()
+      activeInstance = INSTANCE
     }
   }
   fun setUnifiedPushActive() { activeProvider = "unifiedpush" }
