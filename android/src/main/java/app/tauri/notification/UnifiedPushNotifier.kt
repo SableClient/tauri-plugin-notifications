@@ -8,10 +8,14 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.json.JSONObject
 
 object UnifiedPushNotifier {
     private const val CHANNEL_ID = "messages"
+    private const val ACTION_TYPE_ID = "sable-message"
+    private const val GROUP_KEY = "matrix_messages"
 
     fun showFromPush(context: Context, rawMessage: String) {
         val rootJson = try {
@@ -25,10 +29,11 @@ object UnifiedPushNotifier {
         val roomId = notification.optString("room_id")
         val eventId = notification.optString("event_id")
         val sender = notification.optString("sender_display_name")
-        val title = notification.optString("room_name").ifEmpty { "New message" }
+        val title = notification.optString("room_name").ifEmpty {
+            notification.optString("sender_display_name").ifEmpty { "New message" }
+        }
         val body = buildBody(notification, sender)
 
-        // Extract user_id from top-level or notification sub-object
         val userId = rootJson.optString("user_id").ifEmpty {
             notification.optString("user_id")
         }
@@ -39,12 +44,8 @@ object UnifiedPushNotifier {
             .getIdentifier("notification_icon", "drawable", context.packageName)
             .takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
 
-        val notifId = (roomId.ifEmpty { eventId }).hashCode()
+        val notifId = sableNotifId(userId, roomId)
 
-        // Build intent mimicking TauriNotificationManager.buildIntent() so
-        // that NotificationPlugin.onIntent() -> handleNotificationActionPerformed()
-        // -> extractLocalNotificationData() extracts room_id/event_id/user_id
-        // from NOTIFICATION_OBJ_INTENT_KEY, matching the warm-path behavior.
         val intent = buildPushIntent(context, notifId, roomId, eventId, userId)
 
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -57,32 +58,64 @@ object UnifiedPushNotifier {
             .setSmallIcon(iconId)
             .setContentTitle(title)
             .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setGroup(GROUP_KEY)
             .setContentIntent(
                 PendingIntent.getActivity(context, notifId, intent, flags)
             )
 
+        addReplyAction(context, builder, notifId, roomId, eventId, userId, flags)
+
         NotificationManagerCompat.from(context).notify(notifId, builder.build())
     }
 
-    /**
-     * Builds an intent carrying the push payload so that
-     * [NotificationPlugin.onIntent] can extract it via
-     * [TauriNotificationManager.handleNotificationActionPerformed] and
-     * [NotificationPlugin.extractLocalNotificationData].
-     *
-     * Mirrors the structure set by [TauriNotificationManager.buildIntent] in the
-     * warm path (JS-triggered sendNotification). Because [UnifiedPushNotifier]
-     * runs when [NotificationPlugin.instance] is null (cold start), we replicate
-     * the intent extras rather than calling into the not-yet-initialized plugin.
-     */
+    private fun addReplyAction(
+        context: Context,
+        builder: NotificationCompat.Builder,
+        notifId: Int,
+        roomId: String,
+        eventId: String,
+        userId: String,
+        flags: Int
+    ) {
+        val storage = NotificationStorage(context, ObjectMapper())
+        val actions = storage.getActionGroup(ACTION_TYPE_ID)
+        for (action in actions) {
+            if (action == null) continue
+            val actionIntent = buildPushIntent(context, notifId, roomId, eventId, userId, action.id)
+            val actionPendingIntent = PendingIntent.getActivity(
+                context, notifId + action.id.hashCode(), actionIntent, flags
+            )
+            val actionBuilder = NotificationCompat.Action.Builder(
+                R.drawable.ic_transparent, action.title, actionPendingIntent
+            )
+            if (action.input == true) {
+                actionBuilder.addRemoteInput(
+                    RemoteInput.Builder(REMOTE_INPUT_KEY).setLabel(action.title).build()
+                )
+            }
+            builder.addAction(actionBuilder.build())
+        }
+    }
+
+    private fun sableNotifId(userId: String, roomId: String): Int {
+        val key = "$userId\u0000$roomId"
+        var hash = 0
+        for (element in key) {
+            hash = 31 * hash + element.code
+        }
+        return Math.abs(hash)
+    }
+
     private fun buildPushIntent(
         context: Context,
         notifId: Int,
         roomId: String,
         eventId: String,
-        userId: String
+        userId: String,
+        action: String = DEFAULT_PRESS_ACTION
     ): Intent {
         val intent = context.packageManager
             .getLaunchIntentForPackage(context.packageName)!!
@@ -90,11 +123,9 @@ object UnifiedPushNotifier {
         intent.addCategory(Intent.CATEGORY_LAUNCHER)
         intent.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         intent.putExtra(NOTIFICATION_INTENT_KEY, notifId)
-        intent.putExtra(ACTION_INTENT_KEY, DEFAULT_PRESS_ACTION)
+        intent.putExtra(ACTION_INTENT_KEY, action)
         intent.putExtra(NOTIFICATION_IS_REMOVABLE_KEY, true)
 
-        // Build the sourceJson that extractLocalNotificationData expects:
-        // a JSON object with "id" and "extra" containing room context.
         val extraJson = JSONObject().apply {
             put("room_id", roomId)
             put("event_id", eventId)
@@ -104,6 +135,7 @@ object UnifiedPushNotifier {
         val sourceJson = JSONObject().apply {
             put("id", notifId)
             put("extra", extraJson)
+            put("actionTypeId", ACTION_TYPE_ID)
         }.toString()
         intent.putExtra(NOTIFICATION_OBJ_INTENT_KEY, sourceJson)
 

@@ -33,11 +33,14 @@ class UnifiedPushReceiver : MessagingReceiver() {
         val content = String(message.content, Charsets.UTF_8)
         val state = UnifiedPushStateStore(context)
         if (instance != state.activeInstance || state.activeProvider != "unifiedpush") return
-        val plugin = NotificationPlugin.instance
-        if (plugin != null) {
-            plugin.onUnifiedPushMessage(content, instance)
-        } else {
-            UnifiedPushNotifier.showFromPush(context, content)
-        }
+        // Always show the native notification immediately from the push payload.
+        // This eliminates the JS round-trip delay on the warm path (app alive in
+        // background). JS still receives the push-message event for in-app badge
+        // updates and notification enrichment (inbox grouping, fetched content
+        // for event_id_only payloads). When JS calls sendNotification() with the
+        // same notification ID, Android UPDATES the existing notification rather
+        // than showing a duplicate.
+        UnifiedPushNotifier.showFromPush(context, content)
+        NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
 }
