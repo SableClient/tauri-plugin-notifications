@@ -24,7 +24,6 @@ import app.tauri.plugin.Plugin
 import com.google.firebase.messaging.FirebaseMessaging
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.ArrayDeque
-import java.util.UUID
 
 const val LOCAL_NOTIFICATIONS = "permissionState"
 private const val MAX_PENDING_ACTIONS = 32
@@ -477,7 +476,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     pendingPushRegistration = PushRegistration(
       requestedVapid,
       provider,
-      if (provider == "fcm") null else "sable-registration-${UUID.randomUUID()}",
+      if (provider == "fcm") null else unifiedPushState.instanceForRegistration(),
       distributor,
       PushRegistrationPhase.PERMISSION,
       invoke,
@@ -579,7 +578,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val pendingUnifiedPush = pendingPushRegistration?.takeIf {
       it.phase == PushRegistrationPhase.UNIFIED_PUSH || it.phase == PushRegistrationPhase.DISTRIBUTOR
     }
-    val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance
+    val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE
     finishPushRegistrationError("Push registration cancelled by unregister")
 
     if (pendingUnifiedPush != null || unifiedPushState.activeProvider == "unifiedpush") {
@@ -641,14 +640,16 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.reject("Cannot change distributor while push registration is in progress")
       return
     }
-    if (UnifiedPush.getSavedDistributor(activity) != distributor) {
-      try { retireUnifiedPush(unifiedPushState.activeInstance) } catch (error: Exception) {
+    val distributorChanged = UnifiedPush.getSavedDistributor(activity) != distributor
+    if (distributorChanged) {
+      try { retireUnifiedPush(unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE) } catch (error: Exception) {
         invoke.reject(error.message ?: "Failed to retire UnifiedPush registration")
         return
       }
       if (unifiedPushState.activeProvider == "unifiedpush") unifiedPushState.activeProvider = null
     }
     UnifiedPush.saveDistributor(activity, distributor)
+    if (distributorChanged) unifiedPushState.ensureExplicitInstance()
     invoke.resolve()
   }
 
@@ -664,6 +665,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
     unifiedPushState.setUnifiedPushActive()
+    unifiedPushState.endpoint = endpoint
     unifiedPushState.activeInstance = registration.instance
     val result = JSObject()
     result.put("deviceToken", endpoint)
@@ -781,6 +783,14 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private fun retireUnifiedPush(instance: String?) {
     unifiedPushGeneration++
     try { UnifiedPush.unregister(activity, instance ?: UnifiedPushStateStore.INSTANCE) } catch (_: Exception) {
+    }
+    val activeInstance = unifiedPushState.activeInstance
+    val retiresActiveInstance = activeInstance == instance ||
+      (activeInstance == null && instance == UnifiedPushStateStore.INSTANCE &&
+        unifiedPushState.activeProvider == "unifiedpush")
+    if (retiresActiveInstance) {
+      if (unifiedPushState.activeProvider == "unifiedpush") unifiedPushState.activeProvider = null
+      unifiedPushState.clearRegistration()
     }
   }
 
