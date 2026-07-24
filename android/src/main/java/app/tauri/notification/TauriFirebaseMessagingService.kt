@@ -32,7 +32,7 @@ class TauriFirebaseMessagingService : FirebaseMessagingService() {
     message.from?.let { pushData["from"] = it }
     pushData["sentTime"] = message.sentTime
 
-    if (message.data.isNotEmpty()) {
+    if (message.data.isNotEmpty() && UnifiedPushStateStore(this).activeProvider == "fcm") {
       val dataJson = JSONObject(message.data as Map<String, Any>)
       UnifiedPushNotifier.showFromPush(this, dataJson.toString())
     }
