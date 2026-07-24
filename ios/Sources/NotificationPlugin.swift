@@ -265,18 +265,19 @@ class NotificationPlugin: Plugin {
   #if ENABLE_PUSH_NOTIFICATIONS
     private func registerForPushNotifications(completion: @escaping (Result<String, Error>) -> Void)
     {
-      // Store completion for later
-      self.pushTokenCompletion = completion
+      // Main queue: the caller runs on an arbitrary thread whose run loop never
+      // runs (so the Timer would never fire), and this serializes the token state.
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.pushTokenCompletion = completion
 
-      // Set up timeout
-      self.pushTokenTimer?.invalidate()
-      self.pushTokenTimer = Timer.scheduledTimer(withTimeInterval: pushTokenTimeout, repeats: false)
-      { [weak self] _ in
-        self?.handlePushTokenTimeout()
-      }
+        self.pushTokenTimer?.invalidate()
+        self.pushTokenTimer = Timer.scheduledTimer(
+          withTimeInterval: self.pushTokenTimeout, repeats: false
+        ) { [weak self] _ in
+          self?.handlePushTokenTimeout()
+        }
 
-      // Register for remote notifications
-      DispatchQueue.main.async {
         UIApplication.shared.registerForRemoteNotifications()
       }
     }
