@@ -24,7 +24,12 @@ object UnifiedPushNotifier {
             null
         } ?: return
 
-        val notification = rootJson.optJSONObject("notification") ?: return
+        // Also accept the payload nested as a JSON string, not just an object.
+        val notification = rootJson.optJSONObject("notification")
+            ?: rootJson.optString("notification").takeIf { it.isNotEmpty() }?.let {
+                try { JSONObject(it) } catch (e: Exception) { null }
+            }
+            ?: return
 
         val roomId = notification.optString("room_id")
         val eventId = notification.optString("event_id")
@@ -117,8 +122,8 @@ object UnifiedPushNotifier {
         userId: String,
         action: String = DEFAULT_PRESS_ACTION
     ): Intent {
-        val intent = context.packageManager
-            .getLaunchIntentForPackage(context.packageName)!!
+        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: Intent(Intent.ACTION_MAIN).setPackage(context.packageName)
         intent.action = Intent.ACTION_MAIN
         intent.addCategory(Intent.CATEGORY_LAUNCHER)
         intent.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP

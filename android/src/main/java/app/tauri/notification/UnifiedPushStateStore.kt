@@ -18,14 +18,33 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var endpoint: String?
     get() = prefs.getString("up-endpoint", null)
     set(value) = prefs.edit().putString("up-endpoint", value).apply()
+  var p256dh: String?
+    get() = prefs.getString("up-p256dh", null)
+    set(value) = prefs.edit().putString("up-p256dh", value).apply()
+  var auth: String?
+    get() = prefs.getString("up-auth", null)
+    set(value) = prefs.edit().putString("up-auth", value).apply()
+  var distributor: String?
+    get() = prefs.getString("up-distributor", null)
+    set(value) = prefs.edit().putString("up-distributor", value).apply()
+  var vapid: String?
+    get() = prefs.getString("up-vapid", null)
+    set(value) = prefs.edit().putString("up-vapid", value).apply()
 
   fun clearRegistration() {
-    prefs.edit().remove("push-instance").remove("up-endpoint").apply()
+    prefs.edit()
+      .remove("push-instance")
+      .remove("up-endpoint")
+      .remove("up-p256dh")
+      .remove("up-auth")
+      .remove("up-distributor")
+      .remove("up-vapid")
+      .apply()
   }
   fun instanceForRegistration(): String {
     val current = activeInstance
     if (current != null && current != INSTANCE) {
-      try { UnifiedPush.unregister(context, current) } catch (_: Exception) {}
+      try { UnifiedPush.unregister(context, current, CachedKeyManager.getInstance(context)) } catch (_: Exception) {}
       activeInstance = INSTANCE
     }
     return INSTANCE

@@ -795,8 +795,8 @@ final class NotificationTests: XCTestCase {
 
         let options = makeActionOptions(action)
 
-        // Should return foreground as it's checked first
-        XCTAssertEqual(options, .foreground)
+        // Options form an OptionSet, so every requested flag is combined
+        XCTAssertEqual(options, [.foreground, .destructive, .authenticationRequired])
     }
 
     func testMakeCategoryOptionsWithMultipleFlags() {
@@ -813,8 +813,11 @@ final class NotificationTests: XCTestCase {
 
         let options = makeCategoryOptions(actionType)
 
-        // Should return customDismissAction as it's checked first
-        XCTAssertEqual(options, .customDismissAction)
+        // Options form an OptionSet, so every requested flag is combined
+        XCTAssertEqual(
+            options,
+            [.customDismissAction, .allowInCarPlay, .hiddenPreviewsShowTitle, .hiddenPreviewsShowSubtitle]
+        )
     }
 
     // MARK: - Silent Notification Tests

@@ -4,6 +4,7 @@ import android.content.Context
 import org.unifiedpush.android.connector.keys.DefaultKeyManager
 import org.unifiedpush.android.connector.keys.KeyManager
 import org.unifiedpush.android.connector.data.PublicKeySet
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Wraps DefaultKeyManager with in-memory caching to avoid repeated
@@ -11,8 +12,8 @@ import org.unifiedpush.android.connector.data.PublicKeySet
  */
 class CachedKeyManager private constructor(context: Context) : KeyManager {
     private val delegate = DefaultKeyManager(context)
-    private val pubkeyCache = mutableMapOf<String, PublicKeySet>()
-    private val existsCache = mutableMapOf<String, Boolean>()
+    private val pubkeyCache = ConcurrentHashMap<String, PublicKeySet>()
+    private val existsCache = ConcurrentHashMap<String, Boolean>()
 
     override fun decrypt(instance: String, sealed: ByteArray): ByteArray? {
         return delegate.decrypt(instance, sealed)
