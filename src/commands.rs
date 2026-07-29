@@ -162,6 +162,15 @@ pub fn set_action_listener_active<R: Runtime>(
 }
 
 #[command]
+pub fn set_push_message_listener_active<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+    active: bool,
+) -> Result<()> {
+    notification.set_push_message_listener_active(active)
+}
+
+#[command]
 pub fn remove_active<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,

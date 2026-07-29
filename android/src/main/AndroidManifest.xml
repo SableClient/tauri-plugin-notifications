@@ -29,17 +29,17 @@
             </intent-filter>
         </service>
 
-        <!-- UnifiedPush connector receiver -->
-        <receiver
+        <!-- UnifiedPush connector push service. The connector library's
+             internal MessagingReceiverImpl receives distributor broadcasts
+             and forwards them to this service, so no BroadcastReceiver is
+             declared for the connector actions. -->
+        <service
             android:name="app.tauri.notification.UnifiedPushReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
-                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
-                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
-                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
-                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
             </intent-filter>
-        </receiver>
+        </service>
     </application>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />

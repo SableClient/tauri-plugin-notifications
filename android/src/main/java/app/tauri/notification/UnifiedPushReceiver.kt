@@ -1,20 +1,21 @@
 package app.tauri.notification
 
-import android.content.Context
 import org.unifiedpush.android.connector.FailedReason
-import org.unifiedpush.android.connector.MessagingReceiver
-import org.unifiedpush.android.connector.UnifiedPush
+import org.unifiedpush.android.connector.PushService
 import org.unifiedpush.android.connector.data.PushEndpoint
 import org.unifiedpush.android.connector.data.PushMessage
-import org.unifiedpush.android.connector.keys.KeyManager
 
-class UnifiedPushReceiver : MessagingReceiver() {
-
-    override fun getKeyManager(context: Context): KeyManager {
-        return CachedKeyManager.getInstance(context)
-    }
-
-    override fun onNewEndpoint(context: Context, endpoint: PushEndpoint, instance: String) {
+/**
+ * UnifiedPush entry point. Declared in the manifest as a non-exported
+ * [PushService] with an intent-filter for [PushService.ACTION_PUSH_EVENT];
+ * the connector library's own MessagingReceiverImpl receives the distributor
+ * broadcasts and forwards them to this service over a bound connection.
+ * Do NOT declare a BroadcastReceiver for the connector actions
+ * (NEW_ENDPOINT/MESSAGE/UNREGISTERED/REGISTRATION_FAILED/TEMP_UNAVAILABLE):
+ * it would shadow the library's MessagingReceiverImpl.
+ */
+class UnifiedPushReceiver : PushService() {
+    override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
         NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
             endpoint.url,
             endpoint.pubKeySet?.pubKey,
@@ -23,21 +24,21 @@ class UnifiedPushReceiver : MessagingReceiver() {
         )
     }
 
-    override fun onRegistrationFailed(context: Context, reason: FailedReason, instance: String) {
+    override fun onRegistrationFailed(reason: FailedReason, instance: String) {
         NotificationPlugin.instance?.onUnifiedPushRegistrationFailed(reason.name, instance)
     }
 
-    override fun onUnregistered(context: Context, instance: String) {
+    override fun onUnregistered(instance: String) {
         NotificationPlugin.instance?.onUnifiedPushUnregistered(instance)
     }
 
-    override fun onTempUnavailable(context: Context, instance: String) {
+    override fun onTempUnavailable(instance: String) {
         NotificationPlugin.instance?.onUnifiedPushTemporaryUnavailable(instance)
     }
 
-    override fun onMessage(context: Context, message: PushMessage, instance: String) {
+    override fun onMessage(message: PushMessage, instance: String) {
         val content = String(message.content, Charsets.UTF_8)
-        val state = UnifiedPushStateStore(context)
+        val state = UnifiedPushStateStore(this)
         if (instance != state.activeInstance || state.activeProvider != "unifiedpush") return
         // Always show the native notification immediately from the push payload.
         // This eliminates the JS round-trip delay on the warm path (app alive in
@@ -45,8 +46,10 @@ class UnifiedPushReceiver : MessagingReceiver() {
         // updates and notification enrichment (inbox grouping, fetched content
         // for event_id_only payloads). When JS calls sendNotification() with the
         // same notification ID, Android UPDATES the existing notification rather
-        // than showing a duplicate.
-        UnifiedPushNotifier.showFromPush(context, content)
+        // than showing a duplicate. If no JS push-message listener is attached,
+        // NotificationPlugin.onUnifiedPushMessage drops the event and the native
+        // post stands alone.
+        UnifiedPushNotifier.showFromPush(this, content)
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
 }

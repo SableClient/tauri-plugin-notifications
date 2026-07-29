@@ -327,6 +327,10 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    pub const fn set_push_message_listener_active(&self, _active: bool) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// Create a notification channel (not supported on macOS).
     pub fn create_channel(&self, _channel: crate::Channel) -> crate::Result<()> {
         Err(crate::Error::Io(std::io::Error::other(

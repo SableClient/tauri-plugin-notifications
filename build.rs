@@ -25,6 +25,7 @@ const COMMANDS: &[&str] = &[
     "permission_state",
     "set_click_listener_active",
     "set_action_listener_active",
+    "set_push_message_listener_active",
     "list_distributors",
     "set_distributor",
     "set_token",

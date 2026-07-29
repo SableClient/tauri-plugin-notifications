@@ -32,6 +32,7 @@ It allows all notification related features.
 - `allow-permission-state`
 - `allow-set-click-listener-active`
 - `allow-set-action-listener-active`
+- `allow-set-push-message-listener-active`
 - `allow-list-distributors`
 - `allow-set-distributor`
 - `allow-set-token`
@@ -639,6 +640,32 @@ Enables the set_distributor command without any pre-configured scope.
 <td>
 
 Denies the set_distributor command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-set-push-message-listener-active`
+
+</td>
+<td>
+
+Enables the set_push_message_listener_active command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-set-push-message-listener-active`
+
+</td>
+<td>
+
+Denies the set_push_message_listener_active command without any pre-configured scope.
 
 </td>
 </tr>
