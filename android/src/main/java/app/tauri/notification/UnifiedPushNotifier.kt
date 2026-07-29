@@ -9,8 +9,10 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import app.tauri.Logger
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.json.JSONObject
+import kotlin.math.abs
 
 object UnifiedPushNotifier {
     private const val CHANNEL_ID = "messages"
@@ -49,7 +51,21 @@ object UnifiedPushNotifier {
             .getIdentifier("notification_icon", "drawable", context.packageName)
             .takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
 
-        val notifId = sableNotifId(userId, roomId)
+        // Notification identity must match the warm path so the JS side can
+        // enrich or clear this entry: untagged Android key (null, id) with
+        // id = Math.abs(hashCode(userId + '\u0000' + roomId)). Without a user
+        // id in the payload the warm identity cannot be reproduced; fall
+        // back to the room/event key (stable same-room updates, but no warm
+        // clear/enrich match).
+        val notifId = if (userId.isNotEmpty() && roomId.isNotEmpty()) {
+            roomNotificationId(userId, roomId)
+        } else {
+            Logger.warn(
+                Logger.tags(TAG),
+                "Push payload has no user_id; cold notification will not match warm identity"
+            )
+            fallbackNotificationId(roomId.ifEmpty { eventId })
+        }
 
         val intent = buildPushIntent(context, notifId, roomId, eventId, userId)
 
@@ -65,6 +81,7 @@ object UnifiedPushNotifier {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(GROUP_KEY)
             .setContentIntent(
@@ -105,15 +122,38 @@ object UnifiedPushNotifier {
         }
     }
 
-    private fun sableNotifId(userId: String, roomId: String): Int {
-        val key = "$userId\u0000$roomId"
-        var hash = 0
-        for (element in key) {
-            hash = 31 * hash + element.code
-        }
-        return Math.abs(hash)
+    /**
+     * Stable, nonnegative notification id matching the warm-path (deployed
+     * Sable JS) identity for a room:
+     * `Math.abs(hashCode(userId + '\u0000' + roomId))`. The JS hash is a 32-bit
+     * wrap-around hash over UTF-16 code units, exactly what
+     * [String.hashCode] computes, and JS `Math.abs` corresponds to
+     * [kotlin.math.abs] here. [Int.MIN_VALUE] has no positive counterpart
+     * (the JS result 2^31 cannot cross the bridge as an Int), so it is
+     * mapped safely to 0.
+     */
+    internal fun roomNotificationId(userId: String, roomId: String): Int {
+        val hash = userId + '\u0000' + roomId
+        return hash.hashCode().let { if (it == Int.MIN_VALUE) 0 else abs(it) }
     }
 
+    /**
+     * Stable, nonnegative id for a room-or-event key. Used only when the
+     * push payload carries no user id; this identity deliberately differs
+     * from the warm-path one.
+     */
+    internal fun fallbackNotificationId(roomOrEventKey: String): Int =
+        roomOrEventKey.hashCode() and Int.MAX_VALUE
+
+    /**
+     * Builds an intent carrying the push payload so that
+     * [NotificationPlugin.onIntent] can extract it via
+     * [TauriNotificationManager.handleNotificationActionPerformed] and
+     * [NotificationPlugin.extractLocalNotificationData].
+     *
+     * Mirrors the structure set by [TauriNotificationManager.buildIntent] in the
+     * warm path (JS-triggered sendNotification).
+     */
     private fun buildPushIntent(
         context: Context,
         notifId: Int,

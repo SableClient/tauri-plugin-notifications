@@ -263,4 +263,15 @@ impl<R: Runtime> Notifications<R> {
             .run_mobile_plugin("setActionListenerActive", args)
             .map_err(Into::into)
     }
+
+    /// Set push-message listener active state.
+    /// Until JS attaches, incoming push messages fall back to a native
+    /// notification instead of being emitted into the void.
+    pub fn set_push_message_listener_active(&self, active: bool) -> crate::Result<()> {
+        let mut args = HashMap::new();
+        args.insert("active", active);
+        self.0
+            .run_mobile_plugin("setPushMessageListenerActive", args)
+            .map_err(Into::into)
+    }
 }

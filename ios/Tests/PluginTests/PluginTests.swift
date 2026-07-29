@@ -15,6 +15,20 @@ final class NotificationTests: XCTestCase {
         XCTAssertEqual(config.actionTypes?.first?.actions.first?.input, true)
     }
 
+    func testSetPushMessageListenerActiveArgsDecodes() throws {
+        let args = try JSONDecoder().decode(
+            SetPushMessageListenerActiveArgs.self, from: Data("{\"active\":true}".utf8))
+        XCTAssertTrue(args.active)
+
+        let inactive = try JSONDecoder().decode(
+            SetPushMessageListenerActiveArgs.self, from: Data("{\"active\":false}".utf8))
+        XCTAssertFalse(inactive.active)
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                SetPushMessageListenerActiveArgs.self, from: Data("{}".utf8)))
+    }
+
     // MARK: - Notification Content Tests
 
     func testMakeNotificationContentWithBasicNotification() throws {

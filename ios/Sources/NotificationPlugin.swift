@@ -157,6 +157,10 @@ struct SetActionListenerActiveArgs: Decodable {
   let active: Bool
 }
 
+struct SetPushMessageListenerActiveArgs: Decodable {
+  let active: Bool
+}
+
 struct PluginConfig: Decodable {
   let actionTypes: [ActionType]?
 }
@@ -409,6 +413,19 @@ class NotificationPlugin: Plugin {
     do {
       let args = try invoke.parseArgs(SetActionListenerActiveArgs.self)
       notificationHandler.setActionListenerActive(args.active)
+      invoke.resolve()
+    } catch {
+      invoke.reject(error.localizedDescription)
+    }
+  }
+
+  // No-op on iOS: remote notifications are delivered through APNs /
+  // UNUserNotificationCenter regardless of JS listener readiness, so
+  // push-message delivery is not gated on listener state. Exists for
+  // command parity with Android, where the gating prevents drops.
+  @objc func setPushMessageListenerActive(_ invoke: Invoke) {
+    do {
+      _ = try invoke.parseArgs(SetPushMessageListenerActiveArgs.self)
       invoke.resolve()
     } catch {
       invoke.reject(error.localizedDescription)

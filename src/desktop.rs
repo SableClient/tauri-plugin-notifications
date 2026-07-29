@@ -392,6 +392,10 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    pub const fn set_push_message_listener_active(&self, _active: bool) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// Linux: closes every tracked notification whose caller-supplied id
     /// appears in `ids` and removes it from the active map.
     /// macOS / Windows: unsupported.

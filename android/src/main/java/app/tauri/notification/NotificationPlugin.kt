@@ -82,6 +82,11 @@ class SetActionListenerActiveArgs {
 }
 
 @InvokeArg
+class SetPushMessageListenerActiveArgs {
+  var active: Boolean = false
+}
+
+@InvokeArg
 class DistributorArgs {
   var distributor: String? = null
 }
@@ -134,6 +139,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private var pendingNotificationClick: JSObject? = null
   private var hasActionListener = false
   private val pendingNotificationActions = ArrayDeque<JSObject>()
+
+  // Push-message listener readiness: UnifiedPushReceiver always posts the
+  // native notification itself; the JS "push-message" event is emitted only
+  // once a listener has attached.
+  private var hasPushMessageListener = false
 
   // onNewIntent can fire before load() during a cold start triggered
   // by a notification tap (Android delivers the launch intent via
@@ -749,6 +759,12 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   fun onUnifiedPushMessage(content: String, instance: String) {
     if (instance != unifiedPushState.activeInstance || unifiedPushState.activeProvider != "unifiedpush") return
+    if (!hasPushMessageListener) {
+      // UnifiedPushReceiver already posted the native notification; without a
+      // JS push-message listener attached yet, the event would be lost, so
+      // drop it and let the native post stand.
+      return
+    }
     val data = JSObject()
     data.put("message", content)
     data.put("transport", "unifiedpush")
@@ -928,6 +944,13 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       }
     }
 
+    invoke.resolve()
+  }
+
+  @Command
+  fun setPushMessageListenerActive(invoke: Invoke) {
+    val args = invoke.parseArgs(SetPushMessageListenerActiveArgs::class.java)
+    hasPushMessageListener = args.active
     invoke.resolve()
   }
 }
