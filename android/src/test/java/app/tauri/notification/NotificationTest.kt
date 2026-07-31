@@ -295,6 +295,43 @@ class NotificationTest {
     }
 
     /**
+     * The Rust layer re-serializes every notification before it reaches Kotlin, so a
+     * field only arrives if both sides agree on the wire name. Pins the camelCase keys
+     * Rust emits against the mapper configuration `Invoke.parseArgs` uses.
+     */
+    @Test
+    fun testDeserializeMessagingStyleWireFormat() {
+        val objectMapper = ObjectMapper()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+            .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
+
+        val json = """
+            {
+              "id": 7,
+              "title": "Room",
+              "groupConversation": true,
+              "messages": [
+                {"body": "hello", "timestamp": 1700000000000, "senderName": "Alice", "senderKey": "@alice:example.org"},
+                {"body": "mine", "timestamp": 1700000000001}
+              ]
+            }
+        """.trimIndent()
+
+        val notification = objectMapper.readValue(json, Notification::class.java)
+
+        assertTrue(notification.isGroupConversation)
+        assertEquals(2, notification.messages?.size)
+        val first = notification.messages!![0]
+        assertEquals("hello", first.body)
+        assertEquals(1700000000000L, first.timestamp)
+        assertEquals("Alice", first.senderName)
+        assertEquals("@alice:example.org", first.senderKey)
+        // A message with no sender is the device owner's own.
+        assertNull(notification.messages!![1].senderName)
+    }
+
+    /**
      * Proves that Jackson's ObjectMapper cannot properly serialize a Notification
      * with a JSObject (extends org.json.JSONObject) in its `extra` field.
      * Jackson treats JSONObject as a regular Java bean, so the "extra" field

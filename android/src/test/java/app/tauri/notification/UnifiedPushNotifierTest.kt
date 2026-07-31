@@ -151,6 +151,45 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun showFromPush_postsMessagesOnHighImportanceMessagesChannel() {
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!r1:example.org", "\$e1"))
+
+        val posted = shadowNotificationManager().getNotification(null, canonicalId("!r1:example.org"))!!
+        assertEquals("messages.v2", posted.channelId)
+        assertEquals(
+            NotificationManager.IMPORTANCE_HIGH,
+            notificationManager.getNotificationChannel("messages.v2").importance
+        )
+        assertEquals(
+            "android.app.Notification\$MessagingStyle",
+            posted.extras.getString(Notification.EXTRA_TEMPLATE)
+        )
+    }
+
+    @Test
+    fun showFromPush_postsInvitesOnTheirOwnChannelWithoutReplyAction() {
+        val notification = JSONObject()
+            .put("room_id", "!r1:example.org")
+            .put("event_id", "\$invite")
+            .put("room_name", "Room 1")
+            .put("sender_display_name", "Alice")
+            .put("type", "m.room.member")
+            .put("content", JSONObject().put("membership", "invite"))
+        val payload = JSONObject()
+            .put("notification", notification)
+            .put("user_id", "@alice:example.org")
+            .toString()
+
+        UnifiedPushNotifier.showFromPush(context, payload)
+
+        val posted = shadowNotificationManager().getNotification(null, canonicalId("!r1:example.org"))!!
+        assertEquals("invites", posted.channelId)
+        assertEquals("New Invitation", posted.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Alice invites you to Room 1", posted.extras.getString(Notification.EXTRA_TEXT))
+        assertTrue(posted.actions == null || posted.actions.isEmpty())
+    }
+
+    @Test
     fun showFromPush_ignoresMalformedPayloads() {
         UnifiedPushNotifier.showFromPush(context, "not json at all")
         UnifiedPushNotifier.showFromPush(context, """{"foo": "bar"}""")

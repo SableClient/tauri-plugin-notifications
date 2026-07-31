@@ -18,6 +18,7 @@ import android.os.Build.VERSION.SDK_INT
 import android.os.UserManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import app.tauri.Logger
 import app.tauri.plugin.JSObject
@@ -37,6 +38,7 @@ const val REMOTE_INPUT_KEY = "NotificationRemoteInput"
 const val DEFAULT_NOTIFICATION_CHANNEL_ID = "default"
 const val DEFAULT_PRESS_ACTION = "tap"
 const val TAG = "NotificationsPlugin"
+const val SELF_PERSON_NAME = "You"
 
 class TauriNotificationManager(
   private val storage: NotificationStorage,
@@ -140,8 +142,6 @@ class TauriNotificationManager(
 
   // TODO Progressbar support
   // TODO System categories (DO_NOT_DISTURB etc.)
-  // TODO use NotificationCompat.MessagingStyle for latest API
-  // TODO expandable notification NotificationCompat.MessagingStyle
   // TODO media style notification support NotificationCompat.MediaStyle
   @SuppressLint("MissingPermission")
   private fun buildNotification(
@@ -158,7 +158,10 @@ class TauriNotificationManager(
       .setOngoing(notification.isOngoing)
       .setPriority(NotificationCompat.PRIORITY_DEFAULT)
       .setGroupSummary(notification.isGroupSummary)
-    if (notification.largeBody != null) {
+    val messages = notification.messages
+    if (!messages.isNullOrEmpty()) {
+      mBuilder.setStyle(buildMessagingStyle(notification, messages))
+    } else if (notification.largeBody != null) {
       // support multiline text
       mBuilder.setStyle(
         NotificationCompat.BigTextStyle()
@@ -174,19 +177,23 @@ class TauriNotificationManager(
       inboxStyle.setSummaryText(notification.summary)
       mBuilder.setStyle(inboxStyle)
     }
-    val sound = notification.getSound(context, getDefaultSound(context))
-    if (sound != null) {
-      val soundUri = Uri.parse(sound)
-      // Grant permission to use sound
-      context.grantUriPermission(
-        "com.android.systemui",
-        soundUri,
-        Intent.FLAG_GRANT_READ_URI_PERMISSION
-      )
-      mBuilder.setSound(soundUri)
-      mBuilder.setDefaults(android.app.Notification.DEFAULT_VIBRATE or android.app.Notification.DEFAULT_LIGHTS)
+    if (notification.silent == true) {
+      mBuilder.setSilent(true)
     } else {
-      mBuilder.setDefaults(android.app.Notification.DEFAULT_ALL)
+      val sound = notification.getSound(context, getDefaultSound(context))
+      if (sound != null) {
+        val soundUri = Uri.parse(sound)
+        // Grant permission to use sound
+        context.grantUriPermission(
+          "com.android.systemui",
+          soundUri,
+          Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+        mBuilder.setSound(soundUri)
+        mBuilder.setDefaults(android.app.Notification.DEFAULT_VIBRATE or android.app.Notification.DEFAULT_LIGHTS)
+      } else {
+        mBuilder.setDefaults(android.app.Notification.DEFAULT_ALL)
+      }
     }
     val group = notification.group
     if (group != null) {
@@ -220,6 +227,28 @@ class TauriNotificationManager(
         Logger.error(Logger.tags(TAG), "Failed to trigger notification event: ${e.message}", e)
       }
     }
+  }
+
+  /** Renders a conversation as MessagingStyle, the style Android expects for chat. */
+  private fun buildMessagingStyle(
+    notification: Notification,
+    messages: List<NotificationMessage>
+  ): NotificationCompat.MessagingStyle {
+    val style = NotificationCompat.MessagingStyle(
+      Person.Builder().setName(SELF_PERSON_NAME).build()
+    )
+    style.isGroupConversation = notification.isGroupConversation
+    // In a one-to-one chat the sender name is already the title Android shows.
+    if (notification.isGroupConversation) {
+      style.conversationTitle = notification.title
+    }
+    for (message in messages) {
+      val sender = message.senderName?.let { name ->
+        Person.Builder().setName(name).setKey(message.senderKey).build()
+      }
+      style.addMessage(message.body, message.timestamp, sender)
+    }
+    return style
   }
 
   // Create intents for open/dismiss actions

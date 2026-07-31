@@ -29,6 +29,15 @@ class JSObjectDeserializer : JsonDeserializer<JSObject>() {
   }
 }
 
+/** One entry of a MessagingStyle conversation; a null [senderName] means the device owner. */
+@InvokeArg
+class NotificationMessage {
+  lateinit var body: String
+  var timestamp: Long = 0
+  var senderName: String? = null
+  var senderKey: String? = null
+}
+
 @InvokeArg
 class Notification {
   var id: Int = 0
@@ -36,6 +45,8 @@ class Notification {
   var body: String? = null
   var largeBody: String? = null
   var summary: String? = null
+  var messages: List<NotificationMessage>? = null
+  var isGroupConversation = false
   var sound: String? = null
   var icon: String? = null
   var largeIcon: String? = null

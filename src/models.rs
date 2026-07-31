@@ -188,6 +188,17 @@ mod iso8601 {
     }
 }
 
+/// One message of a conversation notification, rendered by Android's `MessagingStyle`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationMessage {
+    pub(crate) body: String,
+    #[serde(default)]
+    pub(crate) timestamp: i64,
+    pub(crate) sender_name: Option<String>,
+    pub(crate) sender_key: Option<String>,
+}
+
 // Each bool is an independent flag in the JS wire format; grouping them would change the JSON shape.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -208,6 +219,10 @@ pub struct NotificationData {
     pub(crate) sound: Option<String>,
     #[serde(default)]
     pub(crate) inbox_lines: Vec<String>,
+    #[serde(default)]
+    pub(crate) messages: Vec<NotificationMessage>,
+    #[serde(default)]
+    pub(crate) group_conversation: bool,
     pub(crate) icon: Option<String>,
     pub(crate) large_icon: Option<String>,
     pub(crate) icon_color: Option<String>,
@@ -242,6 +257,8 @@ impl Default for NotificationData {
             group_summary: false,
             sound: None,
             inbox_lines: Vec::new(),
+            messages: Vec::new(),
+            group_conversation: false,
             icon: None,
             large_icon: None,
             icon_color: None,
