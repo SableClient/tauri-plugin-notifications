@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import app.tauri.Logger
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -15,7 +16,9 @@ import org.json.JSONObject
 import kotlin.math.abs
 
 object UnifiedPushNotifier {
-    private const val CHANNEL_ID = "messages"
+    // Kept in sync with the channel ids the app creates in UnifiedPushNotifications.ts.
+    private const val MESSAGES_CHANNEL_ID = "messages.v2"
+    private const val INVITES_CHANNEL_ID = "invites"
     private const val ACTION_TYPE_ID = "sable-message"
     private const val GROUP_KEY = "matrix_messages"
 
@@ -36,16 +39,22 @@ object UnifiedPushNotifier {
         val roomId = notification.optString("room_id")
         val eventId = notification.optString("event_id")
         val sender = notification.optString("sender_display_name")
-        val title = notification.optString("room_name").ifEmpty {
-            notification.optString("sender_display_name").ifEmpty { "New message" }
+        val isInvite = notification.optString("type") == "m.room.member" &&
+            notification.optJSONObject("content")?.optString("membership") == "invite"
+        val roomName = notification.optString("room_name")
+        val title = if (isInvite) {
+            "New Invitation"
+        } else {
+            roomName.ifEmpty { sender.ifEmpty { "New message" } }
         }
-        val body = buildBody(notification, sender)
+        val body = if (isInvite) buildInviteBody(sender, roomName) else buildBody(notification, sender)
+        val channelId = if (isInvite) INVITES_CHANNEL_ID else MESSAGES_CHANNEL_ID
 
         val userId = rootJson.optString("user_id").ifEmpty {
             notification.optString("user_id")
         }
 
-        ensureChannel(context)
+        ensureChannels(context)
 
         val iconId = context.resources
             .getIdentifier("notification_icon", "drawable", context.packageName)
@@ -75,11 +84,10 @@ object UnifiedPushNotifier {
             PendingIntent.FLAG_CANCEL_CURRENT
         }
 
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(iconId)
             .setContentTitle(title)
             .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -88,7 +96,24 @@ object UnifiedPushNotifier {
                 PendingIntent.getActivity(context, notifId, intent, flags)
             )
 
-        addReplyAction(context, builder, notifId, roomId, eventId, userId, flags)
+        // Same style as the warm path, so JS enrichment updates it in place.
+        if (isInvite) {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        } else {
+            builder.setStyle(
+                NotificationCompat.MessagingStyle(
+                    Person.Builder().setName(SELF_PERSON_NAME).build()
+                ).addMessage(
+                    messageText(notification),
+                    System.currentTimeMillis(),
+                    sender.takeIf { it.isNotEmpty() }?.let { Person.Builder().setName(it).build() }
+                )
+            )
+        }
+
+        if (!isInvite) {
+            addReplyAction(context, builder, notifId, roomId, eventId, userId, flags)
+        }
 
         NotificationManagerCompat.from(context).notify(notifId, builder.build())
     }
@@ -187,24 +212,58 @@ object UnifiedPushNotifier {
         return intent
     }
 
-    private fun buildBody(notification: JSONObject, sender: String): String {
-        val prefix = if (sender.isNotEmpty()) "$sender: " else ""
+    /** The message text on its own, without a sender prefix. */
+    private fun messageText(notification: JSONObject): String {
         if (notification.optString("type") == "m.room.encrypted") {
-            return "${prefix}Encrypted message"
+            return "Encrypted message"
         }
-        val text = notification.optJSONObject("content")?.optString("body")?.takeIf { it.isNotEmpty() }
-        return if (text != null) "$prefix$text" else "${prefix}New message"
+        return notification.optJSONObject("content")
+            ?.optString("body")
+            ?.takeIf { it.isNotEmpty() }
+            ?: "New message"
     }
 
-    private fun ensureChannel(context: Context) {
+    private fun buildBody(notification: JSONObject, sender: String): String {
+        val prefix = if (sender.isNotEmpty()) "$sender: " else ""
+        return "$prefix${messageText(notification)}"
+    }
+
+    private fun buildInviteBody(sender: String, roomName: String): String = when {
+        sender.isNotEmpty() && roomName.isNotEmpty() -> "$sender invites you to $roomName"
+        sender.isNotEmpty() -> "from $sender"
+        roomName.isNotEmpty() -> "to $roomName"
+        else -> ""
+    }
+
+    private fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) == null) {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Messages", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "Matrix message and invite notifications"
-                }
-            )
-        }
+        ensureChannel(
+            manager,
+            MESSAGES_CHANNEL_ID,
+            "Messages",
+            "Matrix message notifications",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+        ensureChannel(
+            manager,
+            INVITES_CHANNEL_ID,
+            "Invitations",
+            "Room and space invitations",
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+    }
+
+    private fun ensureChannel(
+        manager: NotificationManager,
+        id: String,
+        name: String,
+        channelDescription: String,
+        importance: Int
+    ) {
+        if (manager.getNotificationChannel(id) != null) return
+        manager.createNotificationChannel(
+            NotificationChannel(id, name, importance).apply { description = channelDescription }
+        )
     }
 }

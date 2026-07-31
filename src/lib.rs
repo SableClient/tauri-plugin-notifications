@@ -218,6 +218,23 @@ impl<R: Runtime> NotificationsBuilder<R> {
         self
     }
 
+    /// Append a message to the conversation.
+    /// Changes the notification style to messaging on Android.
+    /// Takes precedence over `largeBody` and inbox lines.
+    #[must_use]
+    pub fn message(mut self, message: NotificationMessage) -> Self {
+        self.data.messages.push(message);
+        self
+    }
+
+    /// Marks a `messages` conversation as having more than two participants, so
+    /// Android shows the conversation title alongside each sender.
+    #[must_use]
+    pub const fn group_conversation(mut self, group_conversation: bool) -> Self {
+        self.data.group_conversation = group_conversation;
+        self
+    }
+
     /// Notification icon.
     ///
     /// On Android the icon must be placed in the app's `res/drawable` folder.

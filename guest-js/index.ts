@@ -77,6 +77,17 @@ interface Options {
    */
   inboxLines?: string[];
   /**
+   * Conversation messages, newest last.
+   * Changes the notification style to messaging on Android.
+   * Takes precedence over `largeBody` and `inboxLines`.
+   */
+  messages?: NotificationMessage[];
+  /**
+   * Marks a `messages` conversation as having more than two participants, so
+   * Android shows the conversation title alongside each sender.
+   */
+  groupConversation?: boolean;
+  /**
    * Notification icon.
    *
    * On Android the icon must be placed in the app's `res/drawable` folder.
@@ -114,6 +125,7 @@ interface Options {
   autoCancel?: boolean;
   /**
    * Changes the notification presentation to be silent on iOS (no badge, no sound, not listed).
+   * On Android it suppresses sound and vibration for this post.
    */
   silent?: boolean;
   /**
@@ -261,6 +273,20 @@ class Schedule {
       every: { interval: kind, count, allowWhileIdle },
     };
   }
+}
+
+/**
+ * One message of a conversation notification.
+ */
+interface NotificationMessage {
+  /** The message text. */
+  body: string;
+  /** When the message was sent, in milliseconds since the epoch. */
+  timestamp: number;
+  /** Sender display name. Omit for messages sent by the device owner. */
+  senderName?: string;
+  /** Stable sender identifier, so Android can recognise the same person again. */
+  senderKey?: string;
 }
 
 /**
@@ -952,6 +978,7 @@ async function onNotificationClicked(
 
 export type {
   Attachment,
+  NotificationMessage,
   Options,
   Action,
   ActionType,
