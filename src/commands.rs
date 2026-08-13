@@ -171,21 +171,21 @@ pub fn set_push_message_listener_active<R: Runtime>(
 }
 
 #[command]
-pub fn remove_active<R: Runtime>(
+pub async fn remove_active<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     notifications: Vec<NotificationIdentifier>,
 ) -> Result<()> {
     let ids: Vec<i32> = notifications.into_iter().map(|n| n.id).collect();
-    notification.remove_active(ids)
+    notification.remove_active(ids).await
 }
 
 #[command]
-pub fn remove_all<R: Runtime>(
+pub async fn remove_all<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
 ) -> Result<()> {
-    notification.remove_all_active()
+    notification.remove_all_active().await
 }
 
 #[command]
