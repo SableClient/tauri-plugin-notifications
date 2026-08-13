@@ -77,7 +77,7 @@ jobs:
 
       # Toolchain
       - name: Install Linux GUI development files
-        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libgtk-3-dev
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
 
       # Verify Cargo.toml version matches the tag
