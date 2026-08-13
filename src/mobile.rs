@@ -151,7 +151,7 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
-    pub fn remove_active(&self, notifications: Vec<i32>) -> crate::Result<()> {
+    pub async fn remove_active(&self, notifications: Vec<i32>) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert(
             "notifications",
@@ -165,7 +165,8 @@ impl<R: Runtime> Notifications<R> {
                 .collect::<Vec<HashMap<&str, i32>>>(),
         );
         self.0
-            .run_mobile_plugin("removeActive", args)
+            .run_mobile_plugin_async::<()>("removeActive", args)
+            .await
             .map_err(Into::into)
     }
 
@@ -176,9 +177,10 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
-    pub fn remove_all_active(&self) -> crate::Result<()> {
+    pub async fn remove_all_active(&self) -> crate::Result<()> {
         self.0
-            .run_mobile_plugin("removeActive", ())
+            .run_mobile_plugin_async::<()>("removeActive", ())
+            .await
             .map_err(Into::into)
     }
 
