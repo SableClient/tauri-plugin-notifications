@@ -507,17 +507,24 @@ type PushProvider = "auto" | "fcm" | "unifiedpush" | "embedded";
  * `embeddedGatewayUrl` enables the in-app distributor on Android, used when neither FCM
  * nor an installed distributor can deliver.
  *
+ * `userId` and `deviceId` name the crypto store a cold push should decrypt against; a
+ * push that arrives with no app running has no other way to find it.
+ *
  * @returns A promise resolving to the {@link PushRegistration}.
  */
 async function registerForPushNotifications(
   vapid?: string,
   provider: PushProvider = "auto",
   embeddedGatewayUrl?: string,
+  userId?: string,
+  deviceId?: string,
 ): Promise<PushRegistration> {
   return await invoke("plugin:notifications|register_for_push_notifications", {
     vapid,
     provider,
     embeddedGatewayUrl,
+    userId,
+    deviceId,
   });
 }
 
