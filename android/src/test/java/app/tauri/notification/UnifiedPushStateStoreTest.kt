@@ -1,7 +1,9 @@
 package app.tauri.notification
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -54,5 +56,30 @@ class UnifiedPushStateStoreTest {
     @Test
     fun activeProviderIsNullWhenUnset() {
         assertNull(newStore().activeProvider)
+    }
+
+    @Test
+    fun `remembers the built-in distributor choice separately from having none`() {
+        val store = newStore()
+
+        assertFalse(store.useEmbeddedDistributor)
+
+        store.useEmbeddedDistributor = true
+        assertTrue(newStore().useEmbeddedDistributor)
+
+        store.useEmbeddedDistributor = false
+        assertFalse(newStore().useEmbeddedDistributor)
+    }
+
+    @Test
+    fun `clearing a registration keeps the built-in distributor choice`() {
+        val store = newStore()
+        store.useEmbeddedDistributor = true
+        store.endpoint = "https://ntfy.sh/upabc"
+
+        store.clearRegistration()
+
+        // Re-registering must not silently fall back to a Google-backed distributor.
+        assertTrue(newStore().useEmbeddedDistributor)
     }
 }

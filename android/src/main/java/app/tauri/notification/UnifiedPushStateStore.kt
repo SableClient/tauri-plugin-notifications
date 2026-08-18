@@ -30,6 +30,14 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var vapid: String?
     get() = prefs.getString("up-vapid", null)
     set(value) = prefs.edit().putString("up-vapid", value).apply()
+  /**
+   * True when the user picked the in-app websocket distributor. Distinct from having no
+   * distributor: embedded-FCM also registers the app itself, so the package name alone
+   * cannot tell the two apart.
+   */
+  var useEmbeddedDistributor: Boolean
+    get() = prefs.getBoolean("up-use-embedded", false)
+    set(value) = prefs.edit().putBoolean("up-use-embedded", value).apply()
   /** Kept so a restart reuses the same endpoint. */
   var embeddedTopic: String?
     get() = prefs.getString("up-embedded-topic", null)
