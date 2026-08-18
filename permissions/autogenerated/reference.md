@@ -33,6 +33,7 @@ It allows all notification related features.
 - `allow-set-click-listener-active`
 - `allow-set-action-listener-active`
 - `allow-set-push-message-listener-active`
+- `allow-set-encrypted-content-allowed`
 - `allow-list-distributors`
 - `allow-set-distributor`
 - `allow-set-token`
@@ -640,6 +641,32 @@ Enables the set_distributor command without any pre-configured scope.
 <td>
 
 Denies the set_distributor command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-set-encrypted-content-allowed`
+
+</td>
+<td>
+
+Enables the set_encrypted_content_allowed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-set-encrypted-content-allowed`
+
+</td>
+<td>
+
+Denies the set_encrypted_content_allowed command without any pre-configured scope.
 
 </td>
 </tr>

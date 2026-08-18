@@ -38,6 +38,13 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var useEmbeddedDistributor: Boolean
     get() = prefs.getBoolean("up-use-embedded", false)
     set(value) = prefs.edit().putBoolean("up-use-embedded", value).apply()
+  /** The account a cold push decrypts against; there is no session to ask when cold. */
+  var pushUserId: String?
+    get() = prefs.getString("up-user-id", null)
+    set(value) = prefs.edit().putString("up-user-id", value).apply()
+  var pushDeviceId: String?
+    get() = prefs.getString("up-device-id", null)
+    set(value) = prefs.edit().putString("up-device-id", value).apply()
   /** Kept so a restart reuses the same endpoint. */
   var embeddedTopic: String?
     get() = prefs.getString("up-embedded-topic", null)
@@ -54,6 +61,11 @@ internal class UnifiedPushStateStore(private val context: Context) {
       .remove("up-embedded-topic")
       .apply()
   }
+  /** Mirrors the app's "show encrypted message content" setting. */
+  var showEncryptedContent: Boolean
+    get() = prefs.getBoolean("up-show-encrypted", false)
+    set(value) { prefs.edit().putBoolean("up-show-encrypted", value).apply() }
+
   fun instanceForRegistration(): String {
     val current = activeInstance
     if (current != null && current != INSTANCE) {

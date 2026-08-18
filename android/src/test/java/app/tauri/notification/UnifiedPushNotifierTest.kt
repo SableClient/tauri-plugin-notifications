@@ -196,4 +196,26 @@ class UnifiedPushNotifierTest {
 
         assertTrue(shadowNotificationManager().allNotifications.isEmpty())
     }
+
+    /** The setting is a privacy control, so the webview-less path must fail closed. */
+    @Test
+    fun showFromPush_encryptedRoom_keepsContentHiddenUnlessAllowed() {
+        val encrypted = """{"notification":{"room_id":"!enc:example.org","event_id":"${'$'}e9",""" +
+            """"type":"m.room.encrypted","sender":"@them:example.org",""" +
+            """"content":{"algorithm":"m.megolm.v1.aes-sha2","ciphertext":"AAAA"},""" +
+            """"user_id":"@me:example.org"}}"""
+
+        UnifiedPushStateStore(context).showEncryptedContent = false
+        UnifiedPushNotifier.showFromPush(context, encrypted)
+
+        val posted = shadowNotificationManager().allNotifications.last()
+        val text = posted.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+        assertTrue("leaked content with the setting off: ${'$'}text", text.contains("Encrypted message"))
+    }
+
+    @Test
+    fun showFromPush_encryptedRoom_defaultsToHidden() {
+        assertTrue("must default to closed", !UnifiedPushStateStore(context).showEncryptedContent)
+    }
+
 }

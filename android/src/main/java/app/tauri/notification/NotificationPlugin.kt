@@ -71,6 +71,9 @@ class RegisterPushArgs {
   var vapid: String? = null
   var provider: String? = null
   var embeddedGatewayUrl: String? = null
+  /** Stored so a cold push knows which account to decrypt against. */
+  var userId: String? = null
+  var deviceId: String? = null
 }
 
 @InvokeArg
@@ -86,6 +89,11 @@ class SetActionListenerActiveArgs {
 @InvokeArg
 class SetPushMessageListenerActiveArgs {
   var active: Boolean = false
+}
+
+@InvokeArg
+class SetEncryptedContentAllowedArgs {
+  var allowed: Boolean = false
 }
 
 @InvokeArg
@@ -479,39 +487,18 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.reject("Push registration already in progress")
       return
     }
-    if (provider == "fcm" && unifiedPushState.activeProvider == "unifiedpush") {
-      invoke.reject("Active UnifiedPush registration must be unregistered first")
-      return
-    }
-    if (provider == "unifiedpush" && unifiedPushState.activeProvider == "fcm") {
-      invoke.reject("Active FCM registration must be unregistered first")
-      return
-    }
+    // Both transports now run through UnifiedPush and are told apart by their distributor,
+    // so switching between them is a re-registration rather than a conflict.
     val distributor = if (provider == "fcm") null else UnifiedPush.getSavedDistributor(activity)
 
-    // Reuse the current registration instead of re-registering.
-    if (provider != "fcm" &&
-      pendingPushRegistration == null &&
-      unifiedPushState.activeProvider == "unifiedpush" &&
-      distributor != null &&
-      distributor == unifiedPushState.distributor &&
-      requestedVapid == unifiedPushState.vapid &&
-      unifiedPushState.endpoint != null
-    ) {
-      val cached = JSObject()
-      cached.put("deviceToken", unifiedPushState.endpoint)
-      cached.put("instance", UnifiedPushStateStore.INSTANCE)
-      unifiedPushState.p256dh?.let { cached.put("p256dh", it) }
-      unifiedPushState.auth?.let { cached.put("auth", it) }
-      invoke.resolve(cached)
-      return
-    }
+    args.userId?.takeIf { it.isNotEmpty() }?.let { unifiedPushState.pushUserId = it }
+    args.deviceId?.takeIf { it.isNotEmpty() }?.let { unifiedPushState.pushDeviceId = it }
 
     pendingPushRegistration = PushRegistration(
       requestedVapid,
       provider,
       args.embeddedGatewayUrl,
-      if (provider == "fcm") null else unifiedPushState.instanceForRegistration(),
+      unifiedPushState.instanceForRegistration(),
       distributor,
       PushRegistrationPhase.PERMISSION,
       invoke,
@@ -545,6 +532,25 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val webPushVapid = registration.vapid
     // Re-read: the saved distributor may be gone, in which case register() sends
     // no broadcast and we'd wait out the timeout. Fall through to selection.
+    if (registration.provider == "fcm") {
+      registration.phase = PushRegistrationPhase.UNIFIED_PUSH
+      registration.distributor = activity.packageName
+      try {
+        // The embedded FCM distributor needs no google-services.json: it takes a VAPID
+        // key at runtime, so native push works on builds without Firebase config.
+        UnifiedPush.saveDistributor(activity, activity.packageName)
+        UnifiedPush.register(
+          activity,
+          registration.instance!!,
+          vapid = webPushVapid,
+          keyManager = CachedKeyManager.getInstance(activity),
+        )
+      } catch (error: Exception) {
+        finishPushRegistrationError(error.message ?: "Native push registration failed")
+      }
+      return
+    }
+
     // Checked before any installed distributor: the user asked for this one explicitly.
     if (registration.provider != "fcm" && unifiedPushState.useEmbeddedDistributor) {
       if (!startEmbeddedPushRegistration(registration)) {
@@ -639,20 +645,32 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       ?: EmbeddedPushEndpoint.generateTopic()
     val endpoint = EmbeddedPushEndpoint.endpointUrl(gateway, topic) ?: return false
 
+    // A gateway relays the body untouched, so the homeserver must encrypt to us directly.
+    val keys = EmbeddedWebPushKeys.publicKeys(activity)
+
     registration.phase = PushRegistrationPhase.EMBEDDED
     unifiedPushState.embeddedTopic = topic
     unifiedPushState.endpoint = endpoint
-    unifiedPushState.p256dh = null
-    unifiedPushState.auth = null
+    unifiedPushState.p256dh = keys?.p256dh
+    unifiedPushState.auth = keys?.auth
     unifiedPushState.distributor = EMBEDDED_DISTRIBUTOR
     unifiedPushState.activeProvider = "embedded"
     unifiedPushState.activeInstance = UnifiedPushStateStore.INSTANCE
 
     EmbeddedPushService.start(activity)
-    triggerUnifiedPushToken(endpoint, null, null, "direct")
+    triggerUnifiedPushToken(
+      endpoint,
+      keys?.p256dh,
+      keys?.auth,
+      if (keys == null) "direct" else "webpush",
+    )
 
     val result = JSObject()
     result.put("deviceToken", endpoint)
+    keys?.let {
+      result.put("p256dh", it.p256dh)
+      result.put("auth", it.auth)
+    }
     result.put("instance", UnifiedPushStateStore.INSTANCE)
     result.put("distributor", EMBEDDED_DISTRIBUTOR)
     finishPushRegistrationSuccess(result)
@@ -671,6 +689,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
     val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE
     finishPushRegistrationError("Push registration cancelled by unregister")
+    EmbeddedPushService.stop(activity)
 
     if (pendingUnifiedPush != null || unifiedPushState.activeProvider == "unifiedpush") {
       try {
@@ -721,9 +740,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val distributors = UnifiedPush.getDistributors(activity)
     val result = JSObject()
     val arr = JSArray()
-    distributors.forEach { arr.put(it) }
-    // Offered alongside the installed ones so a user can choose delivery that does not
-    // involve Google, which embedded-FCM does even though it also registers this app.
+    // Our own package here is the embedded-FCM distributor: UnifiedPush delivery that
+    // still goes through Google, duplicating the native transport. Not offered, so
+    // choosing UnifiedPush means no Google either way.
+    distributors.filter { it != activity.packageName }.forEach { arr.put(it) }
     arr.put(EMBEDDED_DISTRIBUTOR)
     result.put("distributors", arr)
     invoke.resolve(result)
@@ -755,7 +775,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.resolve()
       return
     }
+    // The socket outlives the selection otherwise: a foreground service and its
+    // ongoing notification, delivering to an endpoint nothing is registered against.
     unifiedPushState.useEmbeddedDistributor = false
+    EmbeddedPushService.stop(activity)
 
     val distributorChanged = UnifiedPush.getSavedDistributor(activity) != distributor
     if (distributorChanged) {
@@ -1027,6 +1050,14 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun setPushMessageListenerActive(invoke: Invoke) {
     val args = invoke.parseArgs(SetPushMessageListenerActiveArgs::class.java)
     hasPushMessageListener = args.active
+    invoke.resolve()
+  }
+
+  /** The cold path posts notifications without the webview, so it needs the setting too. */
+  @Command
+  fun setEncryptedContentAllowed(invoke: Invoke) {
+    val args = invoke.parseArgs(SetEncryptedContentAllowedArgs::class.java)
+    unifiedPushState.showEncryptedContent = args.allowed
     invoke.resolve()
   }
 }

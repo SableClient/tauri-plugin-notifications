@@ -64,6 +64,8 @@ impl<R: Runtime> Notifications<R> {
         vapid: Option<String>,
         provider: Option<String>,
         embedded_gateway_url: Option<String>,
+        user_id: Option<String>,
+        device_id: Option<String>,
     ) -> crate::Result<PushNotificationResponse> {
         #[cfg(feature = "push-notifications")]
         {
@@ -76,6 +78,10 @@ impl<R: Runtime> Notifications<R> {
                 provider: Option<String>,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 embedded_gateway_url: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                user_id: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                device_id: Option<String>,
             }
             self.0
                 .run_mobile_plugin_async::<PushNotificationResponse>(
@@ -84,6 +90,8 @@ impl<R: Runtime> Notifications<R> {
                         vapid,
                         provider,
                         embedded_gateway_url,
+                        user_id,
+                        device_id,
                     },
                 )
                 .await
@@ -91,7 +99,7 @@ impl<R: Runtime> Notifications<R> {
         }
         #[cfg(not(feature = "push-notifications"))]
         {
-            let _ = (vapid, provider, embedded_gateway_url);
+            let _ = (vapid, provider, embedded_gateway_url, user_id, device_id);
             Err(crate::Error::Io(std::io::Error::other(
                 "Push notifications feature is not enabled",
             )))
@@ -281,6 +289,15 @@ impl<R: Runtime> Notifications<R> {
         args.insert("active", active);
         self.0
             .run_mobile_plugin("setPushMessageListenerActive", args)
+            .map_err(Into::into)
+    }
+
+    /// Mirror the app's encrypted-content setting; a cold push has no webview to ask.
+    pub fn set_encrypted_content_allowed(&self, allowed: bool) -> crate::Result<()> {
+        let mut args = HashMap::new();
+        args.insert("allowed", allowed);
+        self.0
+            .run_mobile_plugin("setEncryptedContentAllowed", args)
             .map_err(Into::into)
     }
 }

@@ -1065,6 +1065,11 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    /// No cold-path notifications on Windows, so there is nothing to mirror.
+    pub const fn set_encrypted_content_allowed(&self, _allowed: bool) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// Create a notification channel (not supported on Windows).
     pub fn create_channel(&self, _channel: crate::Channel) -> crate::Result<()> {
         Err(crate::Error::Io(std::io::Error::other(

@@ -82,6 +82,13 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("org.unifiedpush.android:connector:3.3.3")
+    // The connector declares Tink as a runtime-only dependency, so its WebPush
+    // classes (`apps.fixed_webpush`) would not be on our compile classpath;
+    // depend on the same artifact/version explicitly. Using the plain `tink`
+    // artifact (not `tink-android`) keeps a single copy of the classes on the
+    // classpath — `tink-android` repackages the same classes and trips AGP's
+    // duplicate-class check.
+    implementation("com.google.crypto.tink:tink:1.21.0")
     implementation("org.unifiedpush.android:embedded-fcm-distributor:3.0.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk-android:1.14.11")

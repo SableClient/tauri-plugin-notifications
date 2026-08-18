@@ -1,11 +1,16 @@
 package app.tauri.notification
 
+import android.util.Base64
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class EmbeddedPushEndpointTest {
     @Test
     fun `generated topics carry the up prefix the gateway requires`() {
@@ -88,7 +93,25 @@ class EmbeddedPushEndpointTest {
     fun `unwraps the homeserver body from a gateway message frame`() {
         val frame = """{"id":"x","time":1,"event":"message","topic":"upabc","message":"{\"room_id\":\"!r:e.org\"}"}"""
 
-        assertEquals("""{"room_id":"!r:e.org"}""", EmbeddedPushEndpoint.pushBody(frame))
+        assertEquals("""{"room_id":"!r:e.org"}""", EmbeddedPushEndpoint.pushBody(frame)?.decodeToString())
+    }
+
+    @Test
+    fun `decodes an encrypted body the gateway had to base64`() {
+        val sealed = byteArrayOf(0x00, 0x7F, -0x80, -0x01)
+        val encoded = Base64.encodeToString(sealed, Base64.NO_WRAP)
+        val frame = """{"event":"message","topic":"upabc","message":"$encoded","encoding":"base64"}"""
+
+        assertContentEquals(sealed, EmbeddedPushEndpoint.pushBody(frame))
+    }
+
+    @Test
+    fun `ignores a base64 body the gateway mangled`() {
+        assertNull(
+            EmbeddedPushEndpoint.pushBody(
+                """{"event":"message","topic":"upabc","message":"!!!not base64!!!","encoding":"base64"}""",
+            ),
+        )
     }
 
     @Test

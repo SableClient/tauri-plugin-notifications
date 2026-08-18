@@ -1,5 +1,6 @@
 package app.tauri.notification
 
+import android.util.Base64
 import java.security.SecureRandom
 import java.util.Locale
 import org.json.JSONObject
@@ -10,6 +11,7 @@ internal object EmbeddedPushEndpoint {
 
     private const val TOPIC_RANDOM_BYTES = 12
     private const val WS_PATH = "ws"
+    private const val ENCODING_BASE64 = "base64"
 
     fun generateTopic(random: SecureRandom = SecureRandom()): String {
         val bytes = ByteArray(TOPIC_RANDOM_BYTES)
@@ -51,15 +53,26 @@ internal object EmbeddedPushEndpoint {
         return "$wsEndpoint/$WS_PATH"
     }
 
-    /** `open` and `keepalive` frames carry no payload and must not reach the notifier. */
-    fun pushBody(frame: String): String? {
+    /**
+     * The body the homeserver pushed, still encrypted. `open` and `keepalive` frames
+     * carry no payload; an encrypted body is not valid UTF-8, so it arrives base64.
+     */
+    fun pushBody(frame: String): ByteArray? {
         val json = try {
             JSONObject(frame)
         } catch (_: Exception) {
             return null
         }
         if (json.optString("event") != "message") return null
-        return json.optString("message").takeIf { it.isNotEmpty() }
+
+        val message = json.optString("message").takeIf { it.isNotEmpty() } ?: return null
+        if (json.optString("encoding") != ENCODING_BASE64) return message.toByteArray()
+
+        return try {
+            Base64.decode(message, Base64.DEFAULT)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
     }
 
     fun webSocketUrlForEndpoint(endpoint: String?): String? {

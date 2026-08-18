@@ -46,12 +46,20 @@
         <service
             android:name="app.tauri.notification.EmbeddedPushService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="remoteMessaging" />
+
+        <receiver
+            android:name="app.tauri.notification.EmbeddedPushBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
 </manifest>

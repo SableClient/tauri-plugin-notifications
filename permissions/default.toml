@@ -35,6 +35,7 @@ permissions = [
   "allow-set-click-listener-active",
   "allow-set-action-listener-active",
   "allow-set-push-message-listener-active",
+  "allow-set-encrypted-content-allowed",
   "allow-list-distributors",
   "allow-set-distributor",
   "allow-set-token",
