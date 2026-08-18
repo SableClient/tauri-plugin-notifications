@@ -721,9 +721,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val distributors = UnifiedPush.getDistributors(activity)
     val result = JSObject()
     val arr = JSArray()
-    distributors.forEach { arr.put(it) }
-    // Offered alongside the installed ones so a user can choose delivery that does not
-    // involve Google, which embedded-FCM does even though it also registers this app.
+    // Our own package here is the embedded-FCM distributor: UnifiedPush delivery that
+    // still goes through Google, duplicating the native transport. Not offered, so
+    // choosing UnifiedPush means no Google either way.
+    distributors.filter { it != activity.packageName }.forEach { arr.put(it) }
     arr.put(EMBEDDED_DISTRIBUTOR)
     result.put("distributors", arr)
     invoke.resolve(result)
