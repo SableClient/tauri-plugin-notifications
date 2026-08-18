@@ -486,24 +486,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     // so switching between them is a re-registration rather than a conflict.
     val distributor = if (provider == "fcm") null else UnifiedPush.getSavedDistributor(activity)
 
-    // Reuse the current registration instead of re-registering.
-    if (provider != "fcm" &&
-      pendingPushRegistration == null &&
-      unifiedPushState.activeProvider == "unifiedpush" &&
-      distributor != null &&
-      distributor == unifiedPushState.distributor &&
-      requestedVapid == unifiedPushState.vapid &&
-      unifiedPushState.endpoint != null
-    ) {
-      val cached = JSObject()
-      cached.put("deviceToken", unifiedPushState.endpoint)
-      cached.put("instance", UnifiedPushStateStore.INSTANCE)
-      unifiedPushState.p256dh?.let { cached.put("p256dh", it) }
-      unifiedPushState.auth?.let { cached.put("auth", it) }
-      invoke.resolve(cached)
-      return
-    }
-
     args.userId?.takeIf { it.isNotEmpty() }?.let { unifiedPushState.pushUserId = it }
     args.deviceId?.takeIf { it.isNotEmpty() }?.let { unifiedPushState.pushDeviceId = it }
 
@@ -511,7 +493,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       requestedVapid,
       provider,
       args.embeddedGatewayUrl,
-      if (provider == "fcm") null else unifiedPushState.instanceForRegistration(),
+      unifiedPushState.instanceForRegistration(),
       distributor,
       PushRegistrationPhase.PERMISSION,
       invoke,
@@ -555,7 +537,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
         UnifiedPush.saveDistributor(activity, activity.packageName)
         UnifiedPush.register(
           activity,
-          registration.instance ?: unifiedPushState.instanceForRegistration(),
+          registration.instance!!,
           vapid = webPushVapid,
           keyManager = CachedKeyManager.getInstance(activity),
         )
@@ -660,16 +642,12 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val endpoint = EmbeddedPushEndpoint.endpointUrl(gateway, topic) ?: return false
 
     // A gateway relays the body untouched, so the homeserver must encrypt to us directly.
-    val keyManager = CachedKeyManager.getInstance(activity)
-    if (!keyManager.exists(UnifiedPushStateStore.INSTANCE)) {
-      keyManager.generate(UnifiedPushStateStore.INSTANCE)
-    }
-    val keys = keyManager.getPublicKeySet(UnifiedPushStateStore.INSTANCE)
+    val keys = EmbeddedWebPushKeys.publicKeys(activity)
 
     registration.phase = PushRegistrationPhase.EMBEDDED
     unifiedPushState.embeddedTopic = topic
     unifiedPushState.endpoint = endpoint
-    unifiedPushState.p256dh = keys?.pubKey
+    unifiedPushState.p256dh = keys?.p256dh
     unifiedPushState.auth = keys?.auth
     unifiedPushState.distributor = EMBEDDED_DISTRIBUTOR
     unifiedPushState.activeProvider = "embedded"
@@ -678,7 +656,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     EmbeddedPushService.start(activity)
     triggerUnifiedPushToken(
       endpoint,
-      keys?.pubKey,
+      keys?.p256dh,
       keys?.auth,
       if (keys == null) "direct" else "webpush",
     )
@@ -686,7 +664,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val result = JSObject()
     result.put("deviceToken", endpoint)
     keys?.let {
-      result.put("p256dh", it.pubKey)
+      result.put("p256dh", it.p256dh)
       result.put("auth", it.auth)
     }
     result.put("instance", UnifiedPushStateStore.INSTANCE)

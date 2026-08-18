@@ -111,16 +111,13 @@ class EmbeddedPushService : Service() {
      * back unchanged, which is what a gateway used for testing sends.
      */
     private fun decrypt(sealed: ByteArray): String? {
-        val keys = CachedKeyManager.getInstance(this)
-        if (!keys.exists(UnifiedPushStateStore.INSTANCE)) return String(sealed)
+        EmbeddedWebPushKeys.decrypt(this, sealed)?.let { return String(it) }
 
-        val clear = try {
-            keys.decrypt(UnifiedPushStateStore.INSTANCE, sealed)
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not decrypt the push body: ${e.message}")
-            null
-        }
-        return clear?.let { String(it) }
+        // A gateway used for testing relays plaintext, which is not a failure worth logging.
+        if (sealed.isNotEmpty() && sealed[0] == '{'.code.toByte()) return String(sealed)
+
+        Log.w(TAG, "Could not decrypt the push body")
+        return null
     }
 
     private fun startInForeground() {

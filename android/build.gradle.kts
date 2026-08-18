@@ -82,6 +82,8 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("org.unifiedpush.android:connector:3.3.3")
+    // The connector ships Tink's WebPush classes but not the interfaces they implement.
+    implementation("com.google.crypto.tink:tink-android:1.18.0")
     implementation("org.unifiedpush.android:embedded-fcm-distributor:3.0.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk-android:1.14.11")
