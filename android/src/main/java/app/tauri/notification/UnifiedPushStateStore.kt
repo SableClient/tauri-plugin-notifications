@@ -30,6 +30,10 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var vapid: String?
     get() = prefs.getString("up-vapid", null)
     set(value) = prefs.edit().putString("up-vapid", value).apply()
+  /** Kept so a restart reuses the same endpoint. */
+  var embeddedTopic: String?
+    get() = prefs.getString("up-embedded-topic", null)
+    set(value) = prefs.edit().putString("up-embedded-topic", value).apply()
 
   fun clearRegistration() {
     prefs.edit()
@@ -39,6 +43,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
       .remove("up-auth")
       .remove("up-distributor")
       .remove("up-vapid")
+      .remove("up-embedded-topic")
       .apply()
   }
   fun instanceForRegistration(): String {
