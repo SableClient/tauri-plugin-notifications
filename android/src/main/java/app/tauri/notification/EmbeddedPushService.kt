@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -86,7 +87,8 @@ class EmbeddedPushService : Service() {
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            val body = EmbeddedPushEndpoint.pushBody(text) ?: return
+            val sealed = EmbeddedPushEndpoint.pushBody(text) ?: return
+            val body = decrypt(sealed) ?: return
             UnifiedPushNotifier.showFromPush(this@EmbeddedPushService, body)
             NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
         }
@@ -101,6 +103,24 @@ class EmbeddedPushService : Service() {
             socket = null
             if (!closing) scheduleReconnect(url)
         }
+    }
+
+    /**
+     * A gateway is a dumb relay, so the body arrives exactly as the homeserver encrypted it,
+     * under the keypair handed out at registration. Bodies that are already plaintext come
+     * back unchanged, which is what a gateway used for testing sends.
+     */
+    private fun decrypt(sealed: ByteArray): String? {
+        val keys = CachedKeyManager.getInstance(this)
+        if (!keys.exists(UnifiedPushStateStore.INSTANCE)) return String(sealed)
+
+        val clear = try {
+            keys.decrypt(UnifiedPushStateStore.INSTANCE, sealed)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not decrypt the push body: ${e.message}")
+            null
+        }
+        return clear?.let { String(it) }
     }
 
     private fun startInForeground() {
@@ -120,7 +140,16 @@ class EmbeddedPushService : Service() {
             .setOngoing(true)
             .build()
 
-        startForeground(FOREGROUND_ID, notification)
+        // `dataSync` would be capped at 6h/day and refused from BOOT_COMPLETED.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                FOREGROUND_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+            )
+        } else {
+            startForeground(FOREGROUND_ID, notification)
+        }
     }
 
     companion object {

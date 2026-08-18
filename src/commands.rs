@@ -43,14 +43,16 @@ pub async fn register_for_push_notifications<R: Runtime>(
     vapid: Option<String>,
     provider: Option<String>,
     embedded_gateway_url: Option<String>,
+    user_id: Option<String>,
+    device_id: Option<String>,
 ) -> Result<crate::models::PushNotificationResponse> {
     #[cfg(mobile)]
     return notification
-        .register_for_push_notifications(vapid, provider, embedded_gateway_url)
+        .register_for_push_notifications(vapid, provider, embedded_gateway_url, user_id, device_id)
         .await;
     #[cfg(desktop)]
     {
-        let _ = (provider, embedded_gateway_url);
+        let _ = (provider, embedded_gateway_url, user_id, device_id);
         notification.register_for_push_notifications(vapid).await
     }
 }

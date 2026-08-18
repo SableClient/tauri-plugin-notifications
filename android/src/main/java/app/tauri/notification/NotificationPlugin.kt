@@ -71,6 +71,9 @@ class RegisterPushArgs {
   var vapid: String? = null
   var provider: String? = null
   var embeddedGatewayUrl: String? = null
+  /** Stored so a cold push knows which account to decrypt against. */
+  var userId: String? = null
+  var deviceId: String? = null
 }
 
 @InvokeArg
@@ -479,14 +482,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.reject("Push registration already in progress")
       return
     }
-    if (provider == "fcm" && unifiedPushState.activeProvider == "unifiedpush") {
-      invoke.reject("Active UnifiedPush registration must be unregistered first")
-      return
-    }
-    if (provider == "unifiedpush" && unifiedPushState.activeProvider == "fcm") {
-      invoke.reject("Active FCM registration must be unregistered first")
-      return
-    }
+    // Both transports now run through UnifiedPush and are told apart by their distributor,
+    // so switching between them is a re-registration rather than a conflict.
     val distributor = if (provider == "fcm") null else UnifiedPush.getSavedDistributor(activity)
 
     // Reuse the current registration instead of re-registering.
@@ -506,6 +503,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.resolve(cached)
       return
     }
+
+    args.userId?.takeIf { it.isNotEmpty() }?.let { unifiedPushState.pushUserId = it }
+    args.deviceId?.takeIf { it.isNotEmpty() }?.let { unifiedPushState.pushDeviceId = it }
 
     pendingPushRegistration = PushRegistration(
       requestedVapid,
@@ -545,6 +545,26 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val webPushVapid = registration.vapid
     // Re-read: the saved distributor may be gone, in which case register() sends
     // no broadcast and we'd wait out the timeout. Fall through to selection.
+    if (registration.provider == "fcm") {
+      registration.phase = PushRegistrationPhase.UNIFIED_PUSH
+      registration.distributor = activity.packageName
+      try {
+        // The embedded FCM distributor registers this app with Google for a WebPush
+        // endpoint. Unlike the Firebase SDK it takes a VAPID key chosen at runtime and
+        // needs no google-services.json, so native push works on builds without one.
+        UnifiedPush.saveDistributor(activity, activity.packageName)
+        UnifiedPush.register(
+          activity,
+          registration.instance ?: unifiedPushState.instanceForRegistration(),
+          vapid = webPushVapid,
+          keyManager = CachedKeyManager.getInstance(activity),
+        )
+      } catch (error: Exception) {
+        finishPushRegistrationError(error.message ?: "Native push registration failed")
+      }
+      return
+    }
+
     // Checked before any installed distributor: the user asked for this one explicitly.
     if (registration.provider != "fcm" && unifiedPushState.useEmbeddedDistributor) {
       if (!startEmbeddedPushRegistration(registration)) {
@@ -639,20 +659,36 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       ?: EmbeddedPushEndpoint.generateTopic()
     val endpoint = EmbeddedPushEndpoint.endpointUrl(gateway, topic) ?: return false
 
+    // A gateway relays the body untouched, so the homeserver must encrypt to us directly.
+    val keyManager = CachedKeyManager.getInstance(activity)
+    if (!keyManager.exists(UnifiedPushStateStore.INSTANCE)) {
+      keyManager.generate(UnifiedPushStateStore.INSTANCE)
+    }
+    val keys = keyManager.getPublicKeySet(UnifiedPushStateStore.INSTANCE)
+
     registration.phase = PushRegistrationPhase.EMBEDDED
     unifiedPushState.embeddedTopic = topic
     unifiedPushState.endpoint = endpoint
-    unifiedPushState.p256dh = null
-    unifiedPushState.auth = null
+    unifiedPushState.p256dh = keys?.pubKey
+    unifiedPushState.auth = keys?.auth
     unifiedPushState.distributor = EMBEDDED_DISTRIBUTOR
     unifiedPushState.activeProvider = "embedded"
     unifiedPushState.activeInstance = UnifiedPushStateStore.INSTANCE
 
     EmbeddedPushService.start(activity)
-    triggerUnifiedPushToken(endpoint, null, null, "direct")
+    triggerUnifiedPushToken(
+      endpoint,
+      keys?.pubKey,
+      keys?.auth,
+      if (keys == null) "direct" else "webpush",
+    )
 
     val result = JSObject()
     result.put("deviceToken", endpoint)
+    keys?.let {
+      result.put("p256dh", it.pubKey)
+      result.put("auth", it.auth)
+    }
     result.put("instance", UnifiedPushStateStore.INSTANCE)
     result.put("distributor", EMBEDDED_DISTRIBUTOR)
     finishPushRegistrationSuccess(result)
