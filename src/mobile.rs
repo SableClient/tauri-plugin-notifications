@@ -63,6 +63,7 @@ impl<R: Runtime> Notifications<R> {
         &self,
         vapid: Option<String>,
         provider: Option<String>,
+        embedded_gateway_url: Option<String>,
     ) -> crate::Result<PushNotificationResponse> {
         #[cfg(feature = "push-notifications")]
         {
@@ -73,18 +74,24 @@ impl<R: Runtime> Notifications<R> {
                 vapid: Option<String>,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 provider: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                embedded_gateway_url: Option<String>,
             }
             self.0
                 .run_mobile_plugin_async::<PushNotificationResponse>(
                     "registerForPushNotifications",
-                    RegisterArgs { vapid, provider },
+                    RegisterArgs {
+                        vapid,
+                        provider,
+                        embedded_gateway_url,
+                    },
                 )
                 .await
                 .map_err(Into::into)
         }
         #[cfg(not(feature = "push-notifications"))]
         {
-            let _ = (vapid, provider);
+            let _ = (vapid, provider, embedded_gateway_url);
             Err(crate::Error::Io(std::io::Error::other(
                 "Push notifications feature is not enabled",
             )))

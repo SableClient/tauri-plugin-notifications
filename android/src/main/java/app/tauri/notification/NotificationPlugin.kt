@@ -21,6 +21,7 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.ArrayDeque
@@ -69,6 +70,7 @@ class RegisterActionTypesArgs {
 class RegisterPushArgs {
   var vapid: String? = null
   var provider: String? = null
+  var embeddedGatewayUrl: String? = null
 }
 
 @InvokeArg
@@ -117,6 +119,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private data class PushRegistration(
     val vapid: String?,
     val provider: String,
+    val embeddedGatewayUrl: String?,
     val instance: String?,
     var distributor: String?,
     var phase: PushRegistrationPhase,
@@ -125,7 +128,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     var timeout: Runnable? = null
   )
 
-  private enum class PushRegistrationPhase { PERMISSION, DISTRIBUTOR, UNIFIED_PUSH, FCM }
+  private enum class PushRegistrationPhase { PERMISSION, DISTRIBUTOR, UNIFIED_PUSH, FCM, EMBEDDED }
 
   private var pendingPushRegistration: PushRegistration? = null
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -156,6 +159,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   companion object {
     var instance: NotificationPlugin? = null
+
+    const val EMBEDDED_DISTRIBUTOR = "embedded-websocket"
 
     fun triggerNotification(notification: Notification, source: String = "local") {
       val data = JSObject()
@@ -466,7 +471,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val args = invoke.parseArgs(RegisterPushArgs::class.java)
     val requestedVapid = args.vapid
     val provider = args.provider ?: "auto"
-    if (provider !in setOf("auto", "fcm", "unifiedpush")) {
+    if (provider !in setOf("auto", "fcm", "unifiedpush", "embedded")) {
       invoke.reject("Unknown push provider: $provider")
       return
     }
@@ -505,6 +510,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     pendingPushRegistration = PushRegistration(
       requestedVapid,
       provider,
+      args.embeddedGatewayUrl,
       if (provider == "fcm") null else unifiedPushState.instanceForRegistration(),
       distributor,
       PushRegistrationPhase.PERMISSION,
@@ -585,8 +591,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    if (registration.provider == "unifiedpush") {
-      finishPushRegistrationError("No UnifiedPush distributor available")
+    if (registration.provider == "unifiedpush" || registration.provider == "embedded") {
+      if (!startEmbeddedPushRegistration(registration)) {
+        finishPushRegistrationError("No UnifiedPush distributor available")
+      }
       return
     }
 
@@ -598,8 +606,47 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
+    // No Firebase config: FCM can never resolve, so skip the token timeout.
+    if (!fcmConfigured() && startEmbeddedPushRegistration(registration)) return
+
     registration.phase = PushRegistrationPhase.FCM
     getFirebaseToken(registration)
+  }
+
+  private fun fcmConfigured(): Boolean =
+    try {
+      FirebaseApp.getApps(activity).isNotEmpty()
+    } catch (_: Exception) {
+      false
+    }
+
+  /** Returns false when no gateway is configured, leaving the caller to report why. */
+  private fun startEmbeddedPushRegistration(registration: PushRegistration): Boolean {
+    val gateway = EmbeddedPushEndpoint.normalizeGateway(registration.embeddedGatewayUrl)
+      ?: return false
+
+    val topic = unifiedPushState.embeddedTopic?.takeIf { EmbeddedPushEndpoint.isValidTopic(it) }
+      ?: EmbeddedPushEndpoint.generateTopic()
+    val endpoint = EmbeddedPushEndpoint.endpointUrl(gateway, topic) ?: return false
+
+    registration.phase = PushRegistrationPhase.EMBEDDED
+    unifiedPushState.embeddedTopic = topic
+    unifiedPushState.endpoint = endpoint
+    unifiedPushState.p256dh = null
+    unifiedPushState.auth = null
+    unifiedPushState.distributor = EMBEDDED_DISTRIBUTOR
+    unifiedPushState.activeProvider = "embedded"
+    unifiedPushState.activeInstance = UnifiedPushStateStore.INSTANCE
+
+    EmbeddedPushService.start(activity)
+    triggerUnifiedPushToken(endpoint, null, null, "direct")
+
+    val result = JSObject()
+    result.put("deviceToken", endpoint)
+    result.put("instance", UnifiedPushStateStore.INSTANCE)
+    result.put("distributor", EMBEDDED_DISTRIBUTOR)
+    finishPushRegistrationSuccess(result)
+    return true
   }
 
   @Command

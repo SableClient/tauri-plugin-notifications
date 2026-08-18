@@ -487,6 +487,25 @@ describe("Notification Functions", () => {
       expect(result).toBe(registration);
     });
 
+    it("should forward the embedded gateway url", async () => {
+      mockInvoke.mockResolvedValue({ deviceToken: "https://ntfy.sh/upabc" });
+
+      await registerForPushNotifications(
+        undefined,
+        "embedded",
+        "https://ntfy.sh",
+      );
+
+      expect(mockInvoke).toHaveBeenCalledWith(
+        "plugin:notifications|register_for_push_notifications",
+        {
+          vapid: undefined,
+          provider: "embedded",
+          embeddedGatewayUrl: "https://ntfy.sh",
+        },
+      );
+    });
+
     it("should forward an explicit push provider", async () => {
       mockInvoke.mockResolvedValue({ deviceToken: "token" });
 

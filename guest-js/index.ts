@@ -495,7 +495,7 @@ interface PushRegistration {
   instance?: string;
 }
 
-type PushProvider = "auto" | "fcm" | "unifiedpush";
+type PushProvider = "auto" | "fcm" | "unifiedpush" | "embedded";
 
 /**
  * Registers the app for push notifications.
@@ -504,15 +504,20 @@ type PushProvider = "auto" | "fcm" | "unifiedpush";
  * Android/Linux. Pass a base64url VAPID public key to register against a Web
  * Push distributor; `p256dh` and `auth` are then set on the result.
  *
+ * `embeddedGatewayUrl` enables the in-app distributor on Android, used when neither FCM
+ * nor an installed distributor can deliver.
+ *
  * @returns A promise resolving to the {@link PushRegistration}.
  */
 async function registerForPushNotifications(
   vapid?: string,
   provider: PushProvider = "auto",
+  embeddedGatewayUrl?: string,
 ): Promise<PushRegistration> {
   return await invoke("plugin:notifications|register_for_push_notifications", {
     vapid,
     provider,
+    embeddedGatewayUrl,
   });
 }
 

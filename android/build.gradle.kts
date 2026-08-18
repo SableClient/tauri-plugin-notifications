@@ -80,6 +80,7 @@ dependencies {
 
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
+    implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("org.unifiedpush.android:connector:3.3.3")
     implementation("org.unifiedpush.android:embedded-fcm-distributor:3.0.0")
     testImplementation("junit:junit:4.13.2")
