@@ -13,10 +13,8 @@ import java.security.spec.ECGenParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
 
 /**
- * WebPush subscription keys for the in-app websocket transport.
- *
- * The connector's key store cannot be used: its `keys` table has a foreign key onto
- * `registrations`, and this transport has no distributor registration.
+ * WebPush subscription keys for the in-app websocket transport. The connector's key
+ * store cannot be used: its `keys` table has a foreign key onto `registrations`.
  */
 internal object EmbeddedWebPushKeys {
     private const val PREFS = "embedded-webpush-keys"

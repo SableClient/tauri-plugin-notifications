@@ -54,10 +54,8 @@ internal object EmbeddedPushEndpoint {
     }
 
     /**
-     * The body the homeserver pushed, still encrypted.
-     *
-     * `open` and `keepalive` frames carry no payload. An encrypted body is not valid UTF-8,
-     * so gateways hand it over base64-encoded and say so in `encoding`.
+     * The body the homeserver pushed, still encrypted. `open` and `keepalive` frames
+     * carry no payload; an encrypted body is not valid UTF-8, so it arrives base64.
      */
     fun pushBody(frame: String): ByteArray? {
         val json = try {

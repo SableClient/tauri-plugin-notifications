@@ -4,9 +4,8 @@ import android.content.Context
 import android.util.Log
 
 /**
- * Decrypts an encrypted push payload without a webview, which a cold push has no way to
- * reach. The host app supplies this by exporting the JNI symbol from its own native
- * library; builds that do not simply skip decryption.
+ * Decrypts a push payload without a webview. The host app supplies this by exporting the
+ * JNI symbol from its native library; builds that do not simply skip decryption.
  */
 internal object PushPayloadDecryptor {
     private const val TAG = "PushPayloadDecryptor"

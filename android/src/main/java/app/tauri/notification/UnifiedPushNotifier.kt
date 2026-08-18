@@ -215,6 +215,7 @@ object UnifiedPushNotifier {
     /** The message text on its own, without a sender prefix. */
     private fun messageText(context: Context, notification: JSONObject): String {
         if (notification.optString("type") == "m.room.encrypted") {
+            if (!UnifiedPushStateStore(context).showEncryptedContent) return "Encrypted message"
             return decryptedBody(context, notification) ?: "Encrypted message"
         }
         return notification.optJSONObject("content")

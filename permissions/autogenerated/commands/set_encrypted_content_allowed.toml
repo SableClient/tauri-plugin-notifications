@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-encrypted-content-allowed"
+description = "Enables the set_encrypted_content_allowed command without any pre-configured scope."
+commands.allow = ["set_encrypted_content_allowed"]
+
+[[permission]]
+identifier = "deny-set-encrypted-content-allowed"
+description = "Denies the set_encrypted_content_allowed command without any pre-configured scope."
+commands.deny = ["set_encrypted_content_allowed"]

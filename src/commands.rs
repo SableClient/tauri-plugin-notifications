@@ -174,6 +174,15 @@ pub fn set_push_message_listener_active<R: Runtime>(
 }
 
 #[command]
+pub fn set_encrypted_content_allowed<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+    allowed: bool,
+) -> Result<()> {
+    notification.set_encrypted_content_allowed(allowed)
+}
+
+#[command]
 #[cfg(mobile)]
 pub async fn remove_active<R: Runtime>(
     _app: AppHandle<R>,

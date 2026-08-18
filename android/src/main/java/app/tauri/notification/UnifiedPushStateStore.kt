@@ -61,6 +61,11 @@ internal class UnifiedPushStateStore(private val context: Context) {
       .remove("up-embedded-topic")
       .apply()
   }
+  /** Mirrors the app's "show encrypted message content" setting. */
+  var showEncryptedContent: Boolean
+    get() = prefs.getBoolean("up-show-encrypted", false)
+    set(value) { prefs.edit().putBoolean("up-show-encrypted", value).apply() }
+
   fun instanceForRegistration(): String {
     val current = activeInstance
     if (current != null && current != INSTANCE) {

@@ -291,4 +291,13 @@ impl<R: Runtime> Notifications<R> {
             .run_mobile_plugin("setPushMessageListenerActive", args)
             .map_err(Into::into)
     }
+
+    /// Mirror the app's encrypted-content setting; a cold push has no webview to ask.
+    pub fn set_encrypted_content_allowed(&self, allowed: bool) -> crate::Result<()> {
+        let mut args = HashMap::new();
+        args.insert("allowed", allowed);
+        self.0
+            .run_mobile_plugin("setEncryptedContentAllowed", args)
+            .map_err(Into::into)
+    }
 }

@@ -396,6 +396,11 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    /// No cold-path notifications on desktop, so there is nothing to mirror.
+    pub const fn set_encrypted_content_allowed(&self, _allowed: bool) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// Linux: closes every tracked notification whose caller-supplied id
     /// appears in `ids` and removes it from the active map.
     /// macOS / Windows: unsupported.

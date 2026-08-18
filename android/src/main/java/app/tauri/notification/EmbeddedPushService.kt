@@ -105,15 +105,11 @@ class EmbeddedPushService : Service() {
         }
     }
 
-    /**
-     * A gateway is a dumb relay, so the body arrives exactly as the homeserver encrypted it,
-     * under the keypair handed out at registration. Bodies that are already plaintext come
-     * back unchanged, which is what a gateway used for testing sends.
-     */
+    /** The gateway relays the body untouched, so it is still encrypted to our keys. */
     private fun decrypt(sealed: ByteArray): String? {
         EmbeddedWebPushKeys.decrypt(this, sealed)?.let { return String(it) }
 
-        // A gateway used for testing relays plaintext, which is not a failure worth logging.
+        // A plaintext relay is used for testing; not a failure worth logging.
         if (sealed.isNotEmpty() && sealed[0] == '{'.code.toByte()) return String(sealed)
 
         Log.w(TAG, "Could not decrypt the push body")

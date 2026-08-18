@@ -92,6 +92,11 @@ class SetPushMessageListenerActiveArgs {
 }
 
 @InvokeArg
+class SetEncryptedContentAllowedArgs {
+  var allowed: Boolean = false
+}
+
+@InvokeArg
 class DistributorArgs {
   var distributor: String? = null
 }
@@ -531,9 +536,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       registration.phase = PushRegistrationPhase.UNIFIED_PUSH
       registration.distributor = activity.packageName
       try {
-        // The embedded FCM distributor registers this app with Google for a WebPush
-        // endpoint. Unlike the Firebase SDK it takes a VAPID key chosen at runtime and
-        // needs no google-services.json, so native push works on builds without one.
+        // The embedded FCM distributor needs no google-services.json: it takes a VAPID
+        // key at runtime, so native push works on builds without Firebase config.
         UnifiedPush.saveDistributor(activity, activity.packageName)
         UnifiedPush.register(
           activity,
@@ -685,6 +689,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
     val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE
     finishPushRegistrationError("Push registration cancelled by unregister")
+    EmbeddedPushService.stop(activity)
 
     if (pendingUnifiedPush != null || unifiedPushState.activeProvider == "unifiedpush") {
       try {
@@ -770,7 +775,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.resolve()
       return
     }
+    // The socket outlives the selection otherwise: a foreground service and its
+    // ongoing notification, delivering to an endpoint nothing is registered against.
     unifiedPushState.useEmbeddedDistributor = false
+    EmbeddedPushService.stop(activity)
 
     val distributorChanged = UnifiedPush.getSavedDistributor(activity) != distributor
     if (distributorChanged) {
@@ -1042,6 +1050,14 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun setPushMessageListenerActive(invoke: Invoke) {
     val args = invoke.parseArgs(SetPushMessageListenerActiveArgs::class.java)
     hasPushMessageListener = args.active
+    invoke.resolve()
+  }
+
+  /** The cold path posts notifications without the webview, so it needs the setting too. */
+  @Command
+  fun setEncryptedContentAllowed(invoke: Invoke) {
+    val args = invoke.parseArgs(SetEncryptedContentAllowedArgs::class.java)
+    unifiedPushState.showEncryptedContent = args.allowed
     invoke.resolve()
   }
 }
