@@ -545,6 +545,16 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val webPushVapid = registration.vapid
     // Re-read: the saved distributor may be gone, in which case register() sends
     // no broadcast and we'd wait out the timeout. Fall through to selection.
+    // Checked before any installed distributor: the user asked for this one explicitly.
+    if (registration.provider != "fcm" && unifiedPushState.useEmbeddedDistributor) {
+      if (!startEmbeddedPushRegistration(registration)) {
+        finishPushRegistrationError(
+          "The built-in distributor needs a gateway; set the built-in distributor server first"
+        )
+      }
+      return
+    }
+
     val savedDistributor =
       if (registration.provider == "fcm") null else UnifiedPush.getSavedDistributor(activity)
     registration.distributor = savedDistributor
@@ -712,6 +722,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val result = JSObject()
     val arr = JSArray()
     distributors.forEach { arr.put(it) }
+    // Offered alongside the installed ones so a user can choose delivery that does not
+    // involve Google, which embedded-FCM does even though it also registers this app.
+    arr.put(EMBEDDED_DISTRIBUTOR)
     result.put("distributors", arr)
     invoke.resolve(result)
   }
@@ -728,6 +741,22 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       // Cancel the in-flight registration so the switch isn't blocked.
       finishPushRegistrationError("Superseded by distributor change")
     }
+    if (distributor == EMBEDDED_DISTRIBUTOR) {
+      unifiedPushGeneration++
+      unifiedPushState.clearRegistration()
+      unifiedPushState.activeProvider = null
+      unifiedPushState.useEmbeddedDistributor = true
+      // Drop any installed distributor, or it wins the next registration.
+      try {
+        UnifiedPush.unregister(activity, UnifiedPushStateStore.INSTANCE, CachedKeyManager.getInstance(activity))
+      } catch (_: Exception) {
+      }
+      unifiedPushState.ensureExplicitInstance()
+      invoke.resolve()
+      return
+    }
+    unifiedPushState.useEmbeddedDistributor = false
+
     val distributorChanged = UnifiedPush.getSavedDistributor(activity) != distributor
     if (distributorChanged) {
       // saveDistributor already replaces the previous primary. Unregistering
