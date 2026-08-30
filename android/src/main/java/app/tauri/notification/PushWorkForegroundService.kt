@@ -27,7 +27,7 @@ class PushWorkForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        ensureChannel(this)
+        runCatching { ensureChannel(this) }
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(notificationIcon(this))

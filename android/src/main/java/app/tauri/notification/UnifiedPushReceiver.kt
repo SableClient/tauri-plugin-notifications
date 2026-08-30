@@ -50,7 +50,7 @@ class UnifiedPushReceiver : PushService() {
         // NotificationPlugin.onUnifiedPushMessage drops the event and the native
         // post stands alone.
         if (!PushWorkForegroundService.render(this, content)) {
-            UnifiedPushNotifier.showFromPush(this, content)
+            UnifiedPushNotifier.showFromPushInBackground(this, content)
         }
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
