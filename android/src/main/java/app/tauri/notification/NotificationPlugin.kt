@@ -1060,4 +1060,19 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.showEncryptedContent = args.allowed
     invoke.resolve()
   }
+
+  @Command
+  fun takePushDiagnostics(invoke: Invoke) {
+    val snapshot = PushDiagnostics.drain(activity.applicationContext)
+
+    val counts = JSObject()
+    snapshot.counts.forEach { (outcome, count) -> counts.put(outcome, count) }
+
+    val data = JSObject()
+    data.put("counts", counts)
+    snapshot.lastOutcome?.let { data.put("lastOutcome", it) }
+    data.put("lastAt", snapshot.lastAt)
+
+    invoke.resolve(data)
+  }
 }

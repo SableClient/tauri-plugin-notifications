@@ -47,7 +47,8 @@ object UnifiedPushNotifier {
         } else {
             roomName.ifEmpty { sender.ifEmpty { "New message" } }
         }
-        val body = if (isInvite) buildInviteBody(sender, roomName) else buildBody(context, notification, sender)
+        val text = if (isInvite) null else messageText(context, notification)
+        val body = if (isInvite) buildInviteBody(sender, roomName) else buildBody(sender, text.orEmpty())
         val channelId = if (isInvite) INVITES_CHANNEL_ID else MESSAGES_CHANNEL_ID
 
         val userId = rootJson.optString("user_id").ifEmpty {
@@ -104,7 +105,7 @@ object UnifiedPushNotifier {
                 NotificationCompat.MessagingStyle(
                     Person.Builder().setName(SELF_PERSON_NAME).build()
                 ).addMessage(
-                    messageText(context, notification),
+                    text.orEmpty(),
                     System.currentTimeMillis(),
                     sender.takeIf { it.isNotEmpty() }?.let { Person.Builder().setName(it).build() }
                 )
@@ -212,25 +213,36 @@ object UnifiedPushNotifier {
         return intent
     }
 
-    /** The message text on its own, without a sender prefix. */
     private fun messageText(context: Context, notification: JSONObject): String {
-        if (notification.optString("type") == "m.room.encrypted") {
-            if (!UnifiedPushStateStore(context).showEncryptedContent) return "Encrypted message"
-            return decryptedBody(context, notification) ?: "Encrypted message"
+        if (notification.optString("type") != "m.room.encrypted") {
+            PushDiagnostics.record(context, PushOutcome.PLAINTEXT)
+            return notification.optJSONObject("content")
+                ?.optString("body")
+                ?.takeIf { it.isNotEmpty() }
+                ?: "New message"
         }
-        return notification.optJSONObject("content")
-            ?.optString("body")
-            ?.takeIf { it.isNotEmpty() }
-            ?: "New message"
+
+        if (!UnifiedPushStateStore(context).showEncryptedContent) {
+            PushDiagnostics.record(context, PushOutcome.HIDDEN_BY_SETTING)
+            return "Encrypted message"
+        }
+
+        val (body, outcome) = decryptedBody(context, notification)
+        PushDiagnostics.record(context, outcome)
+        return body ?: "Encrypted message"
     }
 
-    /** Rebuilds the encrypted event so the native engine can open it. */
-    private fun decryptedBody(context: Context, notification: JSONObject): String? {
+    private fun decryptedBody(
+        context: Context,
+        notification: JSONObject
+    ): Pair<String?, PushOutcome> {
         val state = UnifiedPushStateStore(context)
-        val userId = state.pushUserId ?: return null
-        val deviceId = state.pushDeviceId ?: return null
-        val roomId = notification.optString("room_id").takeIf { it.isNotEmpty() } ?: return null
-        val content = notification.optJSONObject("content") ?: return null
+        val userId = state.pushUserId ?: return null to PushOutcome.NO_ACCOUNT
+        val deviceId = state.pushDeviceId ?: return null to PushOutcome.NO_ACCOUNT
+        val roomId = notification.optString("room_id").takeIf { it.isNotEmpty() }
+            ?: return null to PushOutcome.NO_CONTENT
+        val content = notification.optJSONObject("content")
+            ?: return null to PushOutcome.NO_CONTENT
 
         val event = JSONObject()
             .put("type", "m.room.encrypted")
@@ -240,24 +252,31 @@ object UnifiedPushNotifier {
             .put("sender", notification.optString("sender"))
             .put("origin_server_ts", System.currentTimeMillis())
 
-        val clear = PushPayloadDecryptor.decrypt(
-            context,
-            userId,
-            deviceId,
-            roomId,
-            event.toString(),
-        ) ?: return null
+        val clear = when (
+            val result = PushPayloadDecryptor.decrypt(
+                context,
+                userId,
+                deviceId,
+                roomId,
+                event.toString(),
+            )
+        ) {
+            is PushDecryptResult.Success -> result.clearEventJson
+            is PushDecryptResult.Failure -> return null to result.outcome
+        }
 
-        return try {
+        val body = try {
             JSONObject(clear).optJSONObject("content")?.optString("body")?.takeIf { it.isNotEmpty() }
         } catch (_: Exception) {
             null
         }
+
+        return if (body == null) null to PushOutcome.EMPTY_BODY else body to PushOutcome.DECRYPTED
     }
 
-    private fun buildBody(context: Context, notification: JSONObject, sender: String): String {
+    private fun buildBody(sender: String, text: String): String {
         val prefix = if (sender.isNotEmpty()) "$sender: " else ""
-        return "$prefix${messageText(context, notification)}"
+        return "$prefix$text"
     }
 
     private fun buildInviteBody(sender: String, roomName: String): String = when {

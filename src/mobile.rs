@@ -6,7 +6,7 @@ use tauri::{
 
 use crate::models::{
     ActionType, ActiveNotification, Channel, PendingNotification, PermissionResponse,
-    PushNotificationResponse,
+    PushDiagnostics, PushNotificationResponse,
 };
 
 use std::collections::HashMap;
@@ -299,5 +299,18 @@ impl<R: Runtime> Notifications<R> {
         self.0
             .run_mobile_plugin("setEncryptedContentAllowed", args)
             .map_err(Into::into)
+    }
+
+    pub fn take_push_diagnostics(&self) -> crate::Result<PushDiagnostics> {
+        #[cfg(target_os = "android")]
+        {
+            self.0
+                .run_mobile_plugin("takePushDiagnostics", ())
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(PushDiagnostics::default())
+        }
     }
 }

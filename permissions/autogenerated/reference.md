@@ -34,6 +34,7 @@ It allows all notification related features.
 - `allow-set-action-listener-active`
 - `allow-set-push-message-listener-active`
 - `allow-set-encrypted-content-allowed`
+- `allow-take-push-diagnostics`
 - `allow-list-distributors`
 - `allow-set-distributor`
 - `allow-set-token`
@@ -745,6 +746,32 @@ Enables the show command without any pre-configured scope.
 <td>
 
 Denies the show command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-take-push-diagnostics`
+
+</td>
+<td>
+
+Enables the take_push_diagnostics command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-take-push-diagnostics`
+
+</td>
+<td>
+
+Denies the take_push_diagnostics command without any pre-configured scope.
 
 </td>
 </tr>

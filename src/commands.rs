@@ -5,6 +5,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime, State, command, plugin::PermissionState};
 
+use crate::models::PushDiagnostics;
 use crate::{NotificationData, Notifications, Result};
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +181,14 @@ pub fn set_encrypted_content_allowed<R: Runtime>(
     allowed: bool,
 ) -> Result<()> {
     notification.set_encrypted_content_allowed(allowed)
+}
+
+#[command]
+pub fn take_push_diagnostics<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<PushDiagnostics> {
+    notification.take_push_diagnostics()
 }
 
 #[command]

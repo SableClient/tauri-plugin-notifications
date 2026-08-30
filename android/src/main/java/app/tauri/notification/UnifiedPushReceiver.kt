@@ -49,7 +49,9 @@ class UnifiedPushReceiver : PushService() {
         // than showing a duplicate. If no JS push-message listener is attached,
         // NotificationPlugin.onUnifiedPushMessage drops the event and the native
         // post stands alone.
-        UnifiedPushNotifier.showFromPush(this, content)
+        if (!PushWorkForegroundService.render(this, content)) {
+            UnifiedPushNotifier.showFromPush(this, content)
+        }
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
 }
