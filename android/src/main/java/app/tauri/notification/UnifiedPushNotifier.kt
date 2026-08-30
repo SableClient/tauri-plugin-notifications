@@ -22,6 +22,14 @@ object UnifiedPushNotifier {
     private const val ACTION_TYPE_ID = "sable-message"
     private const val GROUP_KEY = "matrix_messages"
 
+    fun showFromPushInBackground(context: Context, rawMessage: String) {
+        val app = context.applicationContext
+        Thread {
+            runCatching { showFromPush(app, rawMessage) }
+                .onFailure { Logger.error(Logger.tags(TAG), "Cold push rendering failed", it as? Exception) }
+        }.start()
+    }
+
     fun showFromPush(context: Context, rawMessage: String) {
         val rootJson = try {
             JSONObject(rawMessage)
