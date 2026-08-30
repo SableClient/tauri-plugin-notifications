@@ -1070,6 +1070,11 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    #[allow(clippy::unused_self)]
+    pub fn take_push_diagnostics(&self) -> crate::Result<crate::models::PushDiagnostics> {
+        Ok(crate::models::PushDiagnostics::default())
+    }
+
     /// Create a notification channel (not supported on Windows).
     pub fn create_channel(&self, _channel: crate::Channel) -> crate::Result<()> {
         Err(crate::Error::Io(std::io::Error::other(

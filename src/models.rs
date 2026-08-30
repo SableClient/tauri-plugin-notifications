@@ -41,6 +41,17 @@ pub struct DistributorsResponse {
     pub distributors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushDiagnostics {
+    #[serde(default)]
+    pub counts: HashMap<String, u32>,
+    #[serde(default)]
+    pub last_outcome: Option<String>,
+    #[serde(default)]
+    pub last_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {

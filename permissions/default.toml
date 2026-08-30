@@ -36,6 +36,7 @@ permissions = [
   "allow-set-action-listener-active",
   "allow-set-push-message-listener-active",
   "allow-set-encrypted-content-allowed",
+  "allow-take-push-diagnostics",
   "allow-list-distributors",
   "allow-set-distributor",
   "allow-set-token",

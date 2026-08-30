@@ -401,6 +401,11 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    #[allow(clippy::unused_self)]
+    pub fn take_push_diagnostics(&self) -> crate::Result<crate::models::PushDiagnostics> {
+        Ok(crate::models::PushDiagnostics::default())
+    }
+
     /// Linux: closes every tracked notification whose caller-supplied id
     /// appears in `ids` and removes it from the active map.
     /// macOS / Windows: unsupported.
