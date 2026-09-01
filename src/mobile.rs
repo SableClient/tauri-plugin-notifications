@@ -106,11 +106,12 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
-    pub fn unregister_for_push_notifications(&self) -> crate::Result<()> {
+    pub async fn unregister_for_push_notifications(&self) -> crate::Result<()> {
         #[cfg(feature = "push-notifications")]
         {
             self.0
-                .run_mobile_plugin::<()>("unregisterForPushNotifications", ())
+                .run_mobile_plugin_async::<()>("unregisterForPushNotifications", ())
+                .await
                 .map_err(Into::into)
         }
         #[cfg(not(feature = "push-notifications"))]
@@ -158,11 +159,12 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
-    pub fn register_action_types(&self, types: Vec<ActionType>) -> crate::Result<()> {
+    pub async fn register_action_types(&self, types: Vec<ActionType>) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert("types", types);
         self.0
-            .run_mobile_plugin("registerActionTypes", args)
+            .run_mobile_plugin_async::<()>("registerActionTypes", args)
+            .await
             .map_err(Into::into)
     }
 
@@ -207,25 +209,30 @@ impl<R: Runtime> Notifications<R> {
     }
 
     /// Cancel pending notifications.
-    pub fn cancel(&self, notifications: Vec<i32>) -> crate::Result<()> {
+    pub async fn cancel(&self, notifications: Vec<i32>) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert("notifications", notifications);
-        self.0.run_mobile_plugin("cancel", args).map_err(Into::into)
+        self.0
+            .run_mobile_plugin_async::<()>("cancel", args)
+            .await
+            .map_err(Into::into)
     }
 
     /// Cancel all pending notifications.
-    pub fn cancel_all(&self) -> crate::Result<()> {
+    pub async fn cancel_all(&self) -> crate::Result<()> {
         self.0
-            .run_mobile_plugin("cancelAll", ())
+            .run_mobile_plugin_async::<()>("cancelAll", ())
+            .await
             .map_err(Into::into)
     }
 
     #[allow(unused_variables, clippy::needless_pass_by_value)]
-    pub fn create_channel(&self, channel: Channel) -> crate::Result<()> {
+    pub async fn create_channel(&self, channel: Channel) -> crate::Result<()> {
         #[cfg(target_os = "android")]
         return self
             .0
-            .run_mobile_plugin("createChannel", channel)
+            .run_mobile_plugin_async::<()>("createChannel", channel)
+            .await
             .map_err(Into::into);
         #[cfg(target_os = "ios")]
         return Err(crate::Error::Io(std::io::Error::other(
@@ -234,13 +241,14 @@ impl<R: Runtime> Notifications<R> {
     }
 
     #[allow(unused_variables, clippy::needless_pass_by_value)]
-    pub fn delete_channel(&self, id: impl Into<String>) -> crate::Result<()> {
+    pub async fn delete_channel(&self, id: impl Into<String> + Send) -> crate::Result<()> {
         #[cfg(target_os = "android")]
         {
             let mut args = HashMap::new();
             args.insert("id", id.into());
             self.0
-                .run_mobile_plugin("deleteChannel", args)
+                .run_mobile_plugin_async::<()>("deleteChannel", args)
+                .await
                 .map_err(Into::into)
         }
         #[cfg(target_os = "ios")]
@@ -249,11 +257,12 @@ impl<R: Runtime> Notifications<R> {
         )));
     }
 
-    pub fn list_channels(&self) -> crate::Result<Vec<Channel>> {
+    pub async fn list_channels(&self) -> crate::Result<Vec<Channel>> {
         #[cfg(target_os = "android")]
         return self
             .0
-            .run_mobile_plugin("listChannels", ())
+            .run_mobile_plugin_async("listChannels", ())
+            .await
             .map_err(Into::into);
         #[cfg(target_os = "ios")]
         return Err(crate::Error::Io(std::io::Error::other(
@@ -263,49 +272,54 @@ impl<R: Runtime> Notifications<R> {
 
     /// Set click listener active state.
     /// Used internally to track if JS listener is registered.
-    pub fn set_click_listener_active(&self, active: bool) -> crate::Result<()> {
+    pub async fn set_click_listener_active(&self, active: bool) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert("active", active);
         self.0
-            .run_mobile_plugin("setClickListenerActive", args)
+            .run_mobile_plugin_async::<()>("setClickListenerActive", args)
+            .await
             .map_err(Into::into)
     }
 
     /// Set action listener active state.
     /// Used internally to queue action results until JS is ready.
-    pub fn set_action_listener_active(&self, active: bool) -> crate::Result<()> {
+    pub async fn set_action_listener_active(&self, active: bool) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert("active", active);
         self.0
-            .run_mobile_plugin("setActionListenerActive", args)
+            .run_mobile_plugin_async::<()>("setActionListenerActive", args)
+            .await
             .map_err(Into::into)
     }
 
     /// Set push-message listener active state.
     /// Until JS attaches, incoming push messages fall back to a native
     /// notification instead of being emitted into the void.
-    pub fn set_push_message_listener_active(&self, active: bool) -> crate::Result<()> {
+    pub async fn set_push_message_listener_active(&self, active: bool) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert("active", active);
         self.0
-            .run_mobile_plugin("setPushMessageListenerActive", args)
+            .run_mobile_plugin_async::<()>("setPushMessageListenerActive", args)
+            .await
             .map_err(Into::into)
     }
 
     /// Mirror the app's encrypted-content setting; a cold push has no webview to ask.
-    pub fn set_encrypted_content_allowed(&self, allowed: bool) -> crate::Result<()> {
+    pub async fn set_encrypted_content_allowed(&self, allowed: bool) -> crate::Result<()> {
         let mut args = HashMap::new();
         args.insert("allowed", allowed);
         self.0
-            .run_mobile_plugin("setEncryptedContentAllowed", args)
+            .run_mobile_plugin_async::<()>("setEncryptedContentAllowed", args)
+            .await
             .map_err(Into::into)
     }
 
-    pub fn take_push_diagnostics(&self) -> crate::Result<PushDiagnostics> {
+    pub async fn take_push_diagnostics(&self) -> crate::Result<PushDiagnostics> {
         #[cfg(target_os = "android")]
         {
             self.0
-                .run_mobile_plugin("takePushDiagnostics", ())
+                .run_mobile_plugin_async("takePushDiagnostics", ())
+                .await
                 .map_err(Into::into)
         }
         #[cfg(not(target_os = "android"))]
