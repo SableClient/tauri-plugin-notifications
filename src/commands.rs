@@ -1,6 +1,7 @@
 // Tauri command handlers must take owned values: `State<'_, _>` is the framework's
 // preferred wrapper, and serde-deserialized payloads (Vec, String, ...) cannot be borrowed.
 #![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::unused_async)]
 
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime, State, command, plugin::PermissionState};
@@ -67,7 +68,11 @@ pub async fn unregister_for_push_notifications<R: Runtime>(
     {
         notification.unregister_for_push_notifications_async().await
     }
-    #[cfg(not(all(desktop, target_os = "linux", feature = "push-notifications")))]
+    #[cfg(mobile)]
+    {
+        notification.unregister_for_push_notifications().await
+    }
+    #[cfg(all(desktop, not(all(target_os = "linux", feature = "push-notifications"))))]
     {
         notification.unregister_for_push_notifications()
     }
@@ -128,7 +133,10 @@ pub async fn register_action_types<R: Runtime>(
     notification: State<'_, Notifications<R>>,
     types: Vec<crate::ActionType>,
 ) -> Result<()> {
-    notification.register_action_types(types)
+    #[cfg(mobile)]
+    return notification.register_action_types(types).await;
+    #[cfg(desktop)]
+    return notification.register_action_types(types);
 }
 
 #[command]
@@ -148,47 +156,62 @@ pub async fn get_active<R: Runtime>(
 }
 
 #[command]
-pub fn set_click_listener_active<R: Runtime>(
+pub async fn set_click_listener_active<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     active: bool,
 ) -> Result<()> {
-    notification.set_click_listener_active(active)
+    #[cfg(mobile)]
+    return notification.set_click_listener_active(active).await;
+    #[cfg(desktop)]
+    return notification.set_click_listener_active(active);
 }
 
 #[command]
-pub fn set_action_listener_active<R: Runtime>(
+pub async fn set_action_listener_active<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     active: bool,
 ) -> Result<()> {
-    notification.set_action_listener_active(active)
+    #[cfg(mobile)]
+    return notification.set_action_listener_active(active).await;
+    #[cfg(desktop)]
+    return notification.set_action_listener_active(active);
 }
 
 #[command]
-pub fn set_push_message_listener_active<R: Runtime>(
+pub async fn set_push_message_listener_active<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     active: bool,
 ) -> Result<()> {
-    notification.set_push_message_listener_active(active)
+    #[cfg(mobile)]
+    return notification.set_push_message_listener_active(active).await;
+    #[cfg(desktop)]
+    return notification.set_push_message_listener_active(active);
 }
 
 #[command]
-pub fn set_encrypted_content_allowed<R: Runtime>(
+pub async fn set_encrypted_content_allowed<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     allowed: bool,
 ) -> Result<()> {
-    notification.set_encrypted_content_allowed(allowed)
+    #[cfg(mobile)]
+    return notification.set_encrypted_content_allowed(allowed).await;
+    #[cfg(desktop)]
+    return notification.set_encrypted_content_allowed(allowed);
 }
 
 #[command]
-pub fn take_push_diagnostics<R: Runtime>(
+pub async fn take_push_diagnostics<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
 ) -> Result<PushDiagnostics> {
-    notification.take_push_diagnostics()
+    #[cfg(mobile)]
+    return notification.take_push_diagnostics().await;
+    #[cfg(desktop)]
+    return notification.take_push_diagnostics();
 }
 
 #[command]
@@ -232,44 +255,59 @@ pub fn remove_all<R: Runtime>(
 }
 
 #[command]
-pub fn cancel<R: Runtime>(
+pub async fn cancel<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     notifications: Vec<i32>,
 ) -> Result<()> {
-    notification.cancel(notifications)
+    #[cfg(mobile)]
+    return notification.cancel(notifications).await;
+    #[cfg(desktop)]
+    return notification.cancel(notifications);
 }
 
 #[command]
-pub fn cancel_all<R: Runtime>(
+pub async fn cancel_all<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
 ) -> Result<()> {
-    notification.cancel_all()
+    #[cfg(mobile)]
+    return notification.cancel_all().await;
+    #[cfg(desktop)]
+    return notification.cancel_all();
 }
 
 #[command]
-pub fn create_channel<R: Runtime>(
+pub async fn create_channel<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     channel: crate::Channel,
 ) -> Result<()> {
-    notification.create_channel(channel)
+    #[cfg(mobile)]
+    return notification.create_channel(channel).await;
+    #[cfg(desktop)]
+    return notification.create_channel(channel);
 }
 
 #[command]
-pub fn delete_channel<R: Runtime>(
+pub async fn delete_channel<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     id: String,
 ) -> Result<()> {
-    notification.delete_channel(id)
+    #[cfg(mobile)]
+    return notification.delete_channel(id).await;
+    #[cfg(desktop)]
+    return notification.delete_channel(id);
 }
 
 #[command]
-pub fn list_channels<R: Runtime>(
+pub async fn list_channels<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
 ) -> Result<Vec<crate::Channel>> {
-    notification.list_channels()
+    #[cfg(mobile)]
+    return notification.list_channels().await;
+    #[cfg(desktop)]
+    return notification.list_channels();
 }
