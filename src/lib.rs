@@ -21,6 +21,12 @@ pub struct PluginConfig {
     /// `aps.category` is received before JavaScript initializes.
     #[serde(default)]
     pub action_types: Vec<ActionType>,
+    /// Emit the raw APNs registration token through the generic Tauri event
+    /// channel. Disabled by default because Rust callers already receive the
+    /// token from `register_for_push_notifications` and may keep it outside
+    /// the renderer trust boundary.
+    #[serde(default)]
+    pub expose_push_token_events: bool,
     #[cfg(target_os = "windows")]
     pub windows: WindowsConfig,
 }

@@ -463,6 +463,21 @@ Registers the app for push notifications. On Android this retrieves the FCM devi
 - Android: FCM device token
 - Linux: UnifiedPush endpoint URL (the URL your backend POSTs payloads to)
 
+On iOS the APNs token is returned to the caller but is not also emitted through
+the generic Tauri event channel by default. Apps that intentionally handle the
+raw token in JavaScript can opt into the legacy `push-token` event in
+`tauri.conf.json`:
+
+```json
+{
+  "plugins": {
+    "notifications": {
+      "exposePushTokenEvents": true
+    }
+  }
+}
+```
+
 ### `listDistributors()` **(Linux / UnifiedPush only)**
 Lists every running UnifiedPush distributor by its D-Bus bus name (e.g. `org.unifiedpush.Distributor.ntfy`). Returns an empty array when none is installed — that's the signal to ask the user to install one from <https://unifiedpush.org/users/distributors/>.
 

@@ -13,6 +13,16 @@ final class NotificationTests: XCTestCase {
         XCTAssertEqual(config.actionTypes?.first?.id, "sable-message")
         XCTAssertEqual(config.actionTypes?.first?.actions.first?.id, "sable-reply")
         XCTAssertEqual(config.actionTypes?.first?.actions.first?.input, true)
+        XCTAssertNil(config.exposePushTokenEvents)
+    }
+
+    func testPluginConfigCanExplicitlyExposePushTokenEvents() throws {
+        let config = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(#"{"exposePushTokenEvents":true}"#.utf8)
+        )
+
+        XCTAssertEqual(config.exposePushTokenEvents, true)
     }
 
     func testSetPushMessageListenerActiveArgsDecodes() throws {

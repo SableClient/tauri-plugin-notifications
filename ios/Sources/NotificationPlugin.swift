@@ -163,11 +163,13 @@ struct SetPushMessageListenerActiveArgs: Decodable {
 
 struct PluginConfig: Decodable {
   let actionTypes: [ActionType]?
+  let exposePushTokenEvents: Bool?
 }
 
 class NotificationPlugin: Plugin {
   let notificationHandler = NotificationHandler()
   let notificationManager = NotificationManager()
+  var exposePushTokenEvents = false
 
   #if ENABLE_PUSH_NOTIFICATIONS
     // Completion handler for push token registration
@@ -185,9 +187,11 @@ class NotificationPlugin: Plugin {
   public override func load(webview: WKWebView) {
     super.load(webview: webview)
 
-    if let config = try? parseConfig(PluginConfig.self),
-       let actionTypes = config.actionTypes {
-      makeCategories(actionTypes)
+    if let config = try? parseConfig(PluginConfig.self) {
+      if let actionTypes = config.actionTypes {
+        makeCategories(actionTypes)
+      }
+      exposePushTokenEvents = config.exposePushTokenEvents ?? false
     }
 
     #if ENABLE_PUSH_NOTIFICATIONS
