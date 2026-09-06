@@ -857,7 +857,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   }
 
   fun onUnifiedPushMessage(content: String, instance: String) {
-    if (instance != unifiedPushState.activeInstance || unifiedPushState.activeProvider != "unifiedpush") return
+    if (instance != unifiedPushState.activeInstance) return
+    if (unifiedPushState.activeProvider !in setOf("unifiedpush", "embedded")) return
     if (!hasPushMessageListener) {
       // UnifiedPushReceiver already posted the native notification; without a
       // JS push-message listener attached yet, the event would be lost, so
