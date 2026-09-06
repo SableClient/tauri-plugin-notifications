@@ -131,6 +131,34 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun showFromPush_encryptedRoomKeepsConversationTitle() {
+        assertConversationTitle("m.room.encrypted")
+    }
+
+    @Test
+    fun showFromPush_unencryptedRoomKeepsConversationTitle() {
+        assertConversationTitle("m.room.message")
+    }
+
+    private fun assertConversationTitle(eventType: String) {
+        val payload = JSONObject(pushPayload("!named:example.org", "event"))
+        payload.getJSONObject("notification").put("type", eventType)
+
+        UnifiedPushNotifier.showFromPush(context, payload.toString())
+
+        val posted = shadowNotificationManager().getNotification(null, canonicalId("!named:example.org"))
+        assertEquals("Room 1", posted.extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))
+        assertTrue(posted.extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION))
+        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)!!
+        assertEquals("Alice", style.messages.last().person?.name)
+        assertEquals(if (eventType == "m.room.encrypted") "Encrypted message" else "hello", style.messages.last().text)
+        val source = shadowOf(posted.contentIntent).savedIntent.getStringExtra(NOTIFICATION_OBJ_INTENT_KEY)!!
+        assertTrue(source.contains("@alice:example.org"))
+        assertTrue(source.contains("!named:example.org"))
+        assertTrue(source.contains("event"))
+    }
+
+    @Test
     fun showFromPush_postsBaselineBeforeNativeDecryption() {
         val state = UnifiedPushStateStore(context)
         state.pushUserId = "@alice:example.org"
@@ -149,6 +177,7 @@ class UnifiedPushNotifierTest {
             assertTrue("a slow native decrypt must not delay notification delivery", baselineWasVisible)
             val posted = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org"))!!
             assertTrue(posted.extras.getString(Notification.EXTRA_TEXT)!!.contains("decrypted"))
+            assertEquals("Room 1", posted.extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))
         } finally {
             unmockkObject(PushPayloadDecryptor)
         }
