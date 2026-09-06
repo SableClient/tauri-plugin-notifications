@@ -129,9 +129,6 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       inputValue = inputType.userText
     }
 
-    let isSystemAction = actionId == UNNotificationDefaultActionIdentifier
-      || actionId == UNNotificationDismissActionIdentifier
-
     let actionNotification = toActiveNotification(originalNotificationRequest)
       ?? toRemoteActionNotification(originalNotificationRequest)
     let action = ReceivedNotification(
@@ -145,7 +142,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       pendingNotificationActions.append(action)
     }
 
-    if !isSystemAction {
+    if actionId != UNNotificationDefaultActionIdentifier {
       stateLock.unlock()
       if shouldTriggerAction { try? self.plugin?.trigger("actionPerformed", data: action) }
       return
@@ -201,16 +198,40 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
   }
 
   private func notificationExtra(_ userInfo: [AnyHashable: Any]) -> [String: String]? {
+    var notification = userInfo["notification"] as? [String: Any]
+    if let encoded = userInfo["notification"] as? String,
+       let data = encoded.data(using: .utf8) {
+      notification = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+    var recipients = Set<String>()
+    func addRecipient(_ value: Any?) {
+      guard let value = value as? String else { return }
+      let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty { recipients.insert(trimmed) }
+    }
+    addRecipient(userInfo["user_id"])
+    addRecipient(notification?["user_id"])
+    let devices = notification?["devices"] ?? userInfo["devices"]
+    for device in devices as? [[String: Any]] ?? [] {
+      guard let data = device["data"] as? [String: Any] else { continue }
+      addRecipient(data["user_id"])
+      addRecipient((data["default_payload"] as? [String: Any])?["user_id"])
+    }
+    guard recipients.count <= 1 else { return nil }
     var extra = [String: String]()
-    for (key, value) in userInfo {
-      guard let key = key as? String else { continue }
-      guard key != "aps" else { continue }
-      if let value = value as? String {
-        extra[key] = value
-      } else if let value = value as? NSNumber {
-        extra[key] = value.stringValue
+    func merge(_ values: [AnyHashable: Any]) {
+      for (key, value) in values {
+        guard let key = key as? String, key != "aps", key != "notification" else { continue }
+        if let value = value as? String {
+          extra[key] = value
+        } else if let value = value as? NSNumber {
+          extra[key] = value.stringValue
+        }
       }
     }
+    merge(userInfo)
+    if let notification { merge(notification) }
+    if let recipient = recipients.first { extra["user_id"] = recipient }
     return extra.isEmpty ? nil : extra
   }
 

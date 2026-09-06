@@ -171,7 +171,7 @@ class NotificationPlugin: Plugin {
 
   #if ENABLE_PUSH_NOTIFICATIONS
     // Completion handler for push token registration
-    private var pushTokenCompletion: ((Result<String, Error>) -> Void)?
+    private var pushTokenCompletions = [(Result<String, Error>) -> Void]()
     private let pushTokenTimeout: TimeInterval = 10.0
     private var pushTokenTimer: Timer?
   #endif
@@ -241,7 +241,15 @@ class NotificationPlugin: Plugin {
           return
         }
 
-        self?.registerForPushNotifications { result in
+        guard granted else {
+          invoke.reject("Notification permission denied")
+          return
+        }
+        guard let self = self else {
+          invoke.reject("Notification plugin unavailable")
+          return
+        }
+        self.registerForPushNotifications { result in
           switch result {
           case .success(let token):
             invoke.resolve(["deviceToken": token])
@@ -259,6 +267,10 @@ class NotificationPlugin: Plugin {
     #if ENABLE_PUSH_NOTIFICATIONS
       DispatchQueue.main.async {
         UIApplication.shared.unregisterForRemoteNotifications()
+        self.handlePushTokenError(NSError(
+          domain: "NotificationPlugin", code: -2,
+          userInfo: [NSLocalizedDescriptionKey: "Push registration cancelled"]
+        ))
         invoke.resolve()
       }
     #else
@@ -272,8 +284,15 @@ class NotificationPlugin: Plugin {
       // Main queue: the caller runs on an arbitrary thread whose run loop never
       // runs (so the Timer would never fire), and this serializes the token state.
       DispatchQueue.main.async { [weak self] in
-        guard let self = self else { return }
-        self.pushTokenCompletion = completion
+        guard let self = self else {
+          completion(.failure(NSError(
+            domain: "NotificationPlugin", code: -2,
+            userInfo: [NSLocalizedDescriptionKey: "Notification plugin unavailable"]
+          )))
+          return
+        }
+        self.pushTokenCompletions.append(completion)
+        guard self.pushTokenCompletions.count == 1 else { return }
 
         self.pushTokenTimer?.invalidate()
         self.pushTokenTimer = Timer.scheduledTimer(
@@ -290,14 +309,15 @@ class NotificationPlugin: Plugin {
       pushTokenTimer?.invalidate()
       pushTokenTimer = nil
 
-      if let completion = pushTokenCompletion {
-        pushTokenCompletion = nil
+      let completions = pushTokenCompletions
+      pushTokenCompletions.removeAll()
+      if !completions.isEmpty {
         let error = NSError(
           domain: "NotificationPlugin",
           code: -1,
           userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for device token"]
         )
-        completion(.failure(error))
+        completions.forEach { $0(.failure(error)) }
       }
     }
 
@@ -306,10 +326,9 @@ class NotificationPlugin: Plugin {
       pushTokenTimer?.invalidate()
       pushTokenTimer = nil
 
-      if let completion = pushTokenCompletion {
-        pushTokenCompletion = nil
-        completion(.success(token))
-      }
+      let completions = pushTokenCompletions
+      pushTokenCompletions.removeAll()
+      completions.forEach { $0(.success(token)) }
     }
 
     // Called by AppDelegateSwizzler when registration fails
@@ -317,10 +336,9 @@ class NotificationPlugin: Plugin {
       pushTokenTimer?.invalidate()
       pushTokenTimer = nil
 
-      if let completion = pushTokenCompletion {
-        pushTokenCompletion = nil
-        completion(.failure(error))
-      }
+      let completions = pushTokenCompletions
+      pushTokenCompletions.removeAll()
+      completions.forEach { $0(.failure(error)) }
     }
   #endif
 
