@@ -755,3 +755,52 @@ The plugin does **not** install this file for you — it's a packaging/deploymen
 ## License
 
 [MIT](LICENSE)
+
+### Android Matrix push integration (Sable v1 and v2)
+
+Keep the mobile Rust notification calls asynchronous and await them. Calling the
+synchronous mobile bridge while Tauri holds its plugin-store lock can deadlock a
+WebView page-load callback. This includes `set_encrypted_content_allowed` and
+`take_push_diagnostics`, not only notification registration.
+
+The Android renderer accepts a flat Matrix notification, an object under
+`notification`, or a JSON string under `notification`. Account identity may be on
+the envelope, the notification, or in `devices[].data.user_id` /
+`devices[].data.default_payload.user_id`. The latter is required for ntfy, which
+relays the Matrix gateway request unchanged. Conflicting account identities are
+rejected. Include the recipient in every pusher registration; the open UI account
+is not a substitute for a missing push recipient.
+
+A notification with no room is a control/count update and is not displayed. Zero
+unread clears the corresponding room notification. Encrypted messages are posted
+immediately with a generic preview. Optional host-native decryption then updates
+the same notification silently, only while that notification is still current and
+the encrypted-content policy still allows it. Missing keys or a host without the
+optional JNI decryptor leave the generic notification visible. Host apps must set
+the encrypted-content policy to the conjunction of their general preview and
+encrypted-preview settings. Decryption never uses another account's registration.
+
+Registration results need different server routes:
+
+- `p256dh` and `auth`: use a WebPush-capable gateway (or a supporting homeserver).
+- HTTPS endpoint without those keys: use a Matrix UnifiedPush gateway, such as the
+  endpoint provider's discovered gateway or a configured UnifiedPush gateway.
+- Bare FCM/APNs token: use the corresponding configured platform gateway/app ID.
+
+Do not register a plain ntfy endpoint as an FCM token. Persist/re-register the
+pusher on startup and update it when the endpoint changes. Android force-stop
+prevents background delivery until the user opens the app again.
+
+Run the renderer and integration regressions with `cd android && ./gradlew
+:testDebugUnitTest --tests app.tauri.notification.UnifiedPushNotifierTest` (after
+Tauri's Android bindings have been generated).
+
+### iOS Matrix push integration
+
+iOS requires an APNs gateway app ID in `pushNotificationDetails.iosPushAppID`.
+Android continues to use `nativePushAppID`. The signing profile must enable APNs
+for the bundle ID, and the gateway must use the matching APNs environment.
+
+Closed-app delivery requires `aps.alert`. Background decryption requires a host
+notification service extension; the plugin's encrypted-content setting applies
+only to Android. Use generic APNs alerts when previews are disabled.

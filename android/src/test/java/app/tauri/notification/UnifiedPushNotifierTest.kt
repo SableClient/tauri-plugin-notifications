@@ -15,6 +15,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import io.mockk.every
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -68,6 +71,162 @@ class UnifiedPushNotifierTest {
 
     private fun canonicalId(roomId: String, userId: String = "@alice:example.org") =
         UnifiedPushNotifier.roomNotificationId(userId, roomId)
+
+    @Test
+    fun showFromPush_ntfyPayloadUsesRegisteredAccountForIdentityAndTap() {
+        val payload = JSONObject(pushPayload("!ntfy:example.org", "\$ntfy", userId = null))
+        payload.getJSONObject("notification").put("devices", org.json.JSONArray().put(
+            JSONObject().put("pushkey", "https://ntfy.sh/up123?up=1").put("data",
+                JSONObject().put("default_payload", JSONObject().put("user_id", "@alice:example.org")))
+        ))
+        UnifiedPushNotifier.showFromPush(context, payload.toString())
+        val posted = shadowNotificationManager().getNotification(null, canonicalId("!ntfy:example.org"))
+        assertNotNull("ntfy delivery must use the same identity as warm enrichment", posted)
+        val source = shadowOf(posted!!.contentIntent).savedIntent.getStringExtra(NOTIFICATION_OBJ_INTENT_KEY)!!
+        assertTrue(source.contains("@alice:example.org"))
+    }
+
+    @Test
+    fun showFromPush_routesSupportedGatewayPayloadsToTheSameAccountAndRoom() {
+        for (wrapper in listOf("flat", "object", "string")) {
+            for (recipient in listOf("notification", "envelope", "device", "default_payload")) {
+                val notification = JSONObject()
+                    .put("room_id", "!contract:example.org")
+                    .put("event_id", "\$contract")
+                    .put("type", "m.room.message")
+                    .put("content", JSONObject().put("body", "contract message"))
+                val envelope = when (wrapper) {
+                    "flat" -> notification
+                    else -> JSONObject()
+                }
+                when (recipient) {
+                    "notification" -> notification.put("user_id", "@alice:example.org")
+                    "envelope" -> envelope.put("user_id", "@alice:example.org")
+                    else -> {
+                        val data = JSONObject()
+                        if (recipient == "device") data.put("user_id", "@alice:example.org")
+                        else data.put("default_payload", JSONObject().put("user_id", "@alice:example.org"))
+                        notification.put("devices", org.json.JSONArray().put(JSONObject().put("data", data)))
+                    }
+                }
+                if (wrapper == "object") envelope.put("notification", notification)
+                if (wrapper == "string") envelope.put("notification", notification.toString())
+                notificationManager.cancelAll()
+                UnifiedPushNotifier.showFromPush(context, envelope.toString())
+                val posted = shadowNotificationManager().getNotification(null, canonicalId("!contract:example.org"))
+                assertNotNull("$wrapper / $recipient", posted)
+                assertTrue(posted!!.extras.getString(Notification.EXTRA_TEXT)!!.contains("contract message"))
+                val source = shadowOf(posted.contentIntent).savedIntent.getStringExtra(NOTIFICATION_OBJ_INTENT_KEY)!!
+                assertTrue(source.contains("@alice:example.org"))
+            }
+        }
+    }
+
+    @Test
+    fun showFromPush_acceptsFlatMinimalPush() {
+        val payload = JSONObject().put("room_id", "!flat:example.org")
+            .put("event_id", "\$flat").put("user_id", "@alice:example.org").toString()
+        UnifiedPushNotifier.showFromPush(context, payload)
+        assertNotNull(shadowNotificationManager().getNotification(null, canonicalId("!flat:example.org")))
+    }
+
+    @Test
+    fun showFromPush_postsBaselineBeforeNativeDecryption() {
+        val state = UnifiedPushStateStore(context)
+        state.pushUserId = "@alice:example.org"
+        state.pushDeviceId = "DEVICE"
+        state.showEncryptedContent = true
+        var baselineWasVisible = false
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) } answers {
+                baselineWasVisible = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org")) != null
+                PushDecryptResult.Success("""{"content":{"body":"decrypted"}}""")
+            }
+            val payload = JSONObject(pushPayload("!enc:example.org", "\$enc"))
+            payload.getJSONObject("notification").put("type", "m.room.encrypted")
+            UnifiedPushNotifier.showFromPush(context, payload.toString())
+            assertTrue("a slow native decrypt must not delay notification delivery", baselineWasVisible)
+            val posted = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org"))!!
+            assertTrue(posted.extras.getString(Notification.EXTRA_TEXT)!!.contains("decrypted"))
+        } finally {
+            unmockkObject(PushPayloadDecryptor)
+        }
+    }
+
+    @Test
+    fun showFromPush_honorsPrivacyChangesDuringDecryption() {
+        val state = UnifiedPushStateStore(context)
+        state.pushUserId = "@alice:example.org"
+        state.pushDeviceId = "DEVICE"
+        state.showEncryptedContent = true
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) } answers {
+                state.showEncryptedContent = false
+                PushDecryptResult.Success("""{"content":{"body":"private plaintext"}}""")
+            }
+            val payload = JSONObject(pushPayload("!enc:example.org", "\$enc"))
+            payload.getJSONObject("notification").put("type", "m.room.encrypted")
+            UnifiedPushNotifier.showFromPush(context, payload.toString())
+            val posted = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org"))!!
+            assertTrue(posted.extras.getString(Notification.EXTRA_TEXT)!!.contains("Encrypted message"))
+        } finally {
+            unmockkObject(PushPayloadDecryptor)
+        }
+    }
+
+    @Test
+    fun showFromPush_acceptsV2DeviceAccountMetadata() {
+        val payload = JSONObject(pushPayload("!v2:example.org", "\$v2", userId = null))
+        payload.getJSONObject("notification").put("devices", org.json.JSONArray().put(
+            JSONObject().put("data", JSONObject().put("user_id", "@alice:example.org"))
+        ))
+        UnifiedPushNotifier.showFromPush(context, payload.toString())
+        assertNotNull(shadowNotificationManager().getNotification(null, canonicalId("!v2:example.org")))
+    }
+
+    @Test
+    fun showFromPush_rejectsConflictingRecipientsAndControlMessages() {
+        val payload = JSONObject(pushPayload("!conflict:example.org", "\$conflict"))
+        payload.getJSONObject("notification").put("user_id", "@other:example.org")
+        UnifiedPushNotifier.showFromPush(context, payload.toString())
+        UnifiedPushNotifier.showFromPush(context, """{"notification":{"counts":{"unread":5}}}""")
+        UnifiedPushNotifier.showFromPush(context, """{"app_id":"app","ack_token":"token"}""")
+        assertTrue(shadowNotificationManager().allNotifications.isEmpty())
+    }
+
+    @Test
+    fun showFromPush_clearsReadRoomsWithoutPostingAnAlert() {
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!read:example.org", "\$read"))
+        UnifiedPushNotifier.showFromPush(context, """{"notification":{"user_id":"@alice:example.org","room_id":"!read:example.org","counts":{"unread":0}}}""")
+        assertTrue(shadowNotificationManager().allNotifications.isEmpty())
+    }
+
+    @Test
+    fun showFromPush_lateDecryptionDoesNotResurrectDismissedOrSupersededAlerts() {
+        val state = UnifiedPushStateStore(context)
+        state.pushUserId = "@alice:example.org"
+        state.pushDeviceId = "DEVICE"
+        state.showEncryptedContent = true
+        mockkObject(PushPayloadDecryptor)
+        try {
+            for (supersede in listOf(false, true)) {
+                every { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) } answers {
+                    notificationManager.cancel(canonicalId("!enc:example.org"))
+                    if (supersede) UnifiedPushNotifier.showFromPush(context,
+                        pushPayload("!enc:example.org", "\$new", "newer message"))
+                    PushDecryptResult.Success("""{"content":{"body":"stale plaintext"}}""")
+                }
+                val payload = JSONObject(pushPayload("!enc:example.org", "\$old"))
+                payload.getJSONObject("notification").put("type", "m.room.encrypted")
+                UnifiedPushNotifier.showFromPush(context, payload.toString())
+                val posted = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org"))
+                if (supersede) assertTrue(posted!!.extras.getString(Notification.EXTRA_TEXT)!!.contains("newer message"))
+                else assertNull(posted)
+            }
+        } finally { unmockkObject(PushPayloadDecryptor) }
+    }
 
     @Test
     fun roomNotificationId_matchesDeployedJsAbsHashSemantics() {
