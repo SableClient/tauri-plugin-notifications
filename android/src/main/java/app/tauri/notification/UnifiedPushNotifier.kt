@@ -141,7 +141,12 @@ object UnifiedPushNotifier {
             builder.setStyle(
                 NotificationCompat.MessagingStyle(
                     Person.Builder().setName(SELF_PERSON_NAME).build()
-                ).addMessage(
+                ).also { style ->
+                    if (roomName.isNotEmpty()) {
+                        style.conversationTitle = roomName
+                        style.isGroupConversation = true
+                    }
+                }.addMessage(
                     text.orEmpty(),
                     System.currentTimeMillis(),
                     sender.takeIf { it.isNotEmpty() }?.let { Person.Builder().setName(it).build() }
