@@ -641,8 +641,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val gateway = EmbeddedPushEndpoint.normalizeGateway(registration.embeddedGatewayUrl)
       ?: return false
 
-    val topic = unifiedPushState.embeddedTopic?.takeIf { EmbeddedPushEndpoint.isValidTopic(it) }
-      ?: EmbeddedPushEndpoint.generateTopic()
+    val savedTopic = unifiedPushState.embeddedTopic?.takeIf { EmbeddedPushEndpoint.isValidTopic(it) }
+    val topic = savedTopic ?: EmbeddedPushEndpoint.generateTopic()
     val endpoint = EmbeddedPushEndpoint.endpointUrl(gateway, topic) ?: return false
 
     // A gateway relays the body untouched, so the homeserver must encrypt to us directly.
@@ -651,6 +651,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     registration.phase = PushRegistrationPhase.EMBEDDED
     unifiedPushState.embeddedTopic = topic
     unifiedPushState.endpoint = endpoint
+    unifiedPushState.prepareEmbeddedReplay(endpoint, savedTopic == null)
     unifiedPushState.p256dh = keys?.p256dh
     unifiedPushState.auth = keys?.auth
     unifiedPushState.distributor = EMBEDDED_DISTRIBUTOR
@@ -866,20 +867,21 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     triggerActionPerformed(action)
   }
 
-  fun onUnifiedPushMessage(content: String, instance: String) {
-    if (instance != unifiedPushState.activeInstance) return
-    if (unifiedPushState.activeProvider !in setOf("unifiedpush", "embedded")) return
+  fun onUnifiedPushMessage(content: String, instance: String): Boolean {
+    if (instance != unifiedPushState.activeInstance) return false
+    if (unifiedPushState.activeProvider !in setOf("unifiedpush", "embedded")) return false
     if (!hasPushMessageListener) {
       // UnifiedPushReceiver already posted the native notification; without a
       // JS push-message listener attached yet, the event would be lost, so
       // drop it and let the native post stand.
-      return
+      return false
     }
     val data = JSObject()
     data.put("message", content)
     data.put("transport", "unifiedpush")
     data.put("instance", "default")
     trigger("push-message", data)
+    return true
   }
 
   private fun triggerUnifiedPushToken(endpoint: String, p256dh: String?, auth: String?, mode: String) {
@@ -1063,7 +1065,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   @Command
   fun setPushMessageListenerActive(invoke: Invoke) {
     val args = invoke.parseArgs(SetPushMessageListenerActiveArgs::class.java)
+    val becameActive = args.active && !hasPushMessageListener
     hasPushMessageListener = args.active
+    if (becameActive && unifiedPushState.activeProvider == "embedded") {
+      EmbeddedPushService.start(activity, replay = true)
+    }
     invoke.resolve()
   }
 
