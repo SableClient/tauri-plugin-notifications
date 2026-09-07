@@ -8,15 +8,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import kotlin.math.min
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONObject
 
 /**
  * Holds the gateway websocket open when nothing else can deliver. Foreground because
@@ -26,30 +29,54 @@ class EmbeddedPushService : Service() {
     private var client: OkHttpClient? = null
     private var socket: WebSocket? = null
     private var closing = false
-    private var attempt = 0
+    private var retryDelay = BASE_BACKOFF_MS
+    private val handler = Handler(Looper.getMainLooper())
+    private var endpoint: String? = null
+    private var ready = false
+    private val pushExecutor = Executors.newSingleThreadExecutor()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startInForeground()
 
-        val url = EmbeddedPushEndpoint.webSocketUrlForEndpoint(UnifiedPushStateStore(this).endpoint)
+        val state = UnifiedPushStateStore(this)
+        val nextEndpoint = state.endpoint
+        val url = if (state.activeProvider == "embedded") {
+            EmbeddedPushEndpoint.webSocketUrlForEndpoint(nextEndpoint)
+        } else null
         if (url == null) {
             Log.w(TAG, "No embedded push endpoint to connect to; stopping")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        if (socket == null) connect(url)
+        if (endpoint != nextEndpoint) {
+            handler.removeCallbacksAndMessages(null)
+            socket?.cancel()
+            socket = null
+            ready = false
+            endpoint = nextEndpoint
+            retryDelay = BASE_BACKOFF_MS
+        }
+        if (socket == null) {
+            handler.removeCallbacksAndMessages(null)
+            connect(url)
+        } else if (ready) {
+            endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         closing = true
+        handler.removeCallbacksAndMessages(null)
+        ready = false
         socket?.close(NORMAL_CLOSURE, null)
         socket = null
         client?.dispatcher?.executorService?.shutdown()
         client = null
+        pushExecutor.shutdown()
         super.onDestroy()
     }
 
@@ -66,42 +93,61 @@ class EmbeddedPushService : Service() {
 
     private fun scheduleReconnect(url: String) {
         if (closing) return
-        attempt += 1
-        val delay = min(BASE_BACKOFF_MS shl (attempt - 1), MAX_BACKOFF_MS)
-        Log.i(TAG, "Reconnecting to the push gateway in ${delay}ms (attempt $attempt)")
-        // AlarmManager would be doze-throttled; the foreground service keeps us alive.
-        Thread {
-            try {
-                Thread.sleep(delay)
-            } catch (_: InterruptedException) {
-                return@Thread
-            }
-            if (!closing) connect(url)
-        }.start()
+        val delay = retryDelay
+        retryDelay = (retryDelay * 2).coerceAtMost(MAX_BACKOFF_MS)
+        Log.i(TAG, "Reconnecting to the push gateway in ${delay}ms")
+        handler.postDelayed({ if (!closing && socket == null) connect(url) }, delay)
     }
 
     private inner class Listener(private val url: String) : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            attempt = 0
-            Log.i(TAG, "Push gateway websocket open")
-        }
-
         override fun onMessage(webSocket: WebSocket, text: String) {
-            val sealed = EmbeddedPushEndpoint.pushBody(text) ?: return
-            val body = decrypt(sealed) ?: return
-            UnifiedPushNotifier.showFromPush(this@EmbeddedPushService, body)
-            NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
+            handler.post {
+                if (closing || socket !== webSocket) return@post
+                val event = try {
+                    JSONObject(text).optString("event")
+                } catch (_: Exception) {
+                    return@post
+                }
+                if (event == "open") {
+                    Log.i(TAG, "Push gateway subscription ready")
+                    ready = true
+                    retryDelay = BASE_BACKOFF_MS
+                    endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
+                    return@post
+                }
+                val sealed = EmbeddedPushEndpoint.pushBody(text) ?: return@post
+                pushExecutor.execute {
+                    val body = decrypt(sealed) ?: return@execute
+                    runCatching { UnifiedPushNotifier.showFromPush(this@EmbeddedPushService, body) }
+                        .onFailure { Log.w(TAG, "Could not display the push notification") }
+                    handler.post {
+                        if (!closing && socket === webSocket) {
+                            NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
+                        }
+                    }
+                }
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            Log.w(TAG, "Push gateway websocket failed: ${t.message}")
-            socket = null
-            scheduleReconnect(url)
+            disconnected(webSocket)
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(code, null)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            socket = null
-            if (!closing) scheduleReconnect(url)
+            disconnected(webSocket)
+        }
+
+        private fun disconnected(webSocket: WebSocket) {
+            handler.post {
+                if (closing || socket !== webSocket) return@post
+                socket = null
+                ready = false
+                scheduleReconnect(url)
+            }
         }
     }
 

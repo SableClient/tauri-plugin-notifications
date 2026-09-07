@@ -658,23 +658,33 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.activeInstance = UnifiedPushStateStore.INSTANCE
 
     EmbeddedPushService.start(activity)
+    return true
+  }
+
+  internal fun onEmbeddedPushReady(endpoint: String) {
+    val registration = pendingPushRegistration ?: return
+    if (registration.phase != PushRegistrationPhase.EMBEDDED ||
+        unifiedPushState.activeProvider != "embedded" ||
+        unifiedPushState.endpoint != endpoint) return
+
+    val p256dh = unifiedPushState.p256dh
+    val auth = unifiedPushState.auth
     triggerUnifiedPushToken(
       endpoint,
-      keys?.p256dh,
-      keys?.auth,
-      if (keys == null) "direct" else "webpush",
+      p256dh,
+      auth,
+      if (p256dh == null || auth == null) "direct" else "webpush",
     )
 
     val result = JSObject()
     result.put("deviceToken", endpoint)
-    keys?.let {
-      result.put("p256dh", it.p256dh)
-      result.put("auth", it.auth)
+    if (p256dh != null && auth != null) {
+      result.put("p256dh", p256dh)
+      result.put("auth", auth)
     }
     result.put("instance", UnifiedPushStateStore.INSTANCE)
     result.put("distributor", EMBEDDED_DISTRIBUTOR)
     finishPushRegistrationSuccess(result)
-    return true
   }
 
   @Command
