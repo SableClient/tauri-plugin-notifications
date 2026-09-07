@@ -16,7 +16,8 @@ class EmbeddedPushEndpointTest {
     fun `generated topics carry the up prefix the gateway requires`() {
         val topic = EmbeddedPushEndpoint.generateTopic()
 
-        assertTrue(topic.startsWith("up"), "gateways only accept anonymous writes under up*")
+        assertTrue(topic.startsWith("up"))
+        assertEquals(14, topic.length)
         assertTrue(EmbeddedPushEndpoint.isValidTopic(topic))
     }
 
@@ -32,6 +33,7 @@ class EmbeddedPushEndpointTest {
         assertFalse(EmbeddedPushEndpoint.isValidTopic("mytopic"))
         assertFalse(EmbeddedPushEndpoint.isValidTopic("up"))
         assertFalse(EmbeddedPushEndpoint.isValidTopic(null))
+        assertFalse(EmbeddedPushEndpoint.isValidTopic("up0123456789abcdef01234567"))
         assertFalse(EmbeddedPushEndpoint.isValidTopic("up topic/with-slash"))
     }
 
@@ -54,38 +56,46 @@ class EmbeddedPushEndpointTest {
     @Test
     fun `builds the endpoint the homeserver pushes to`() {
         assertEquals(
-            "https://ntfy.sh/upabc123",
-            EmbeddedPushEndpoint.endpointUrl("https://ntfy.sh/", "upabc123"),
+            "https://ntfy.sh/up0123456789ab?up=1",
+            EmbeddedPushEndpoint.endpointUrl("https://ntfy.sh/", "up0123456789ab"),
         )
     }
 
     @Test
     fun `maps https to wss and http to ws`() {
         assertEquals(
-            "wss://ntfy.sh/upabc123/ws",
-            EmbeddedPushEndpoint.webSocketUrl("https://ntfy.sh", "upabc123"),
+            "wss://ntfy.sh/up0123456789ab/ws",
+            EmbeddedPushEndpoint.webSocketUrl("https://ntfy.sh", "up0123456789ab"),
         )
         assertEquals(
-            "ws://localhost:2586/upabc123/ws",
-            EmbeddedPushEndpoint.webSocketUrl("http://localhost:2586", "upabc123"),
+            "ws://localhost:2586/up0123456789ab/ws",
+            EmbeddedPushEndpoint.webSocketUrl("http://localhost:2586", "up0123456789ab"),
         )
     }
 
     @Test
     fun `refuses to build urls from an invalid topic or gateway`() {
         assertNull(EmbeddedPushEndpoint.endpointUrl("https://ntfy.sh", "nope"))
-        assertNull(EmbeddedPushEndpoint.webSocketUrl("ftp://ntfy.sh", "upabc123"))
+        assertNull(EmbeddedPushEndpoint.webSocketUrl("ftp://ntfy.sh", "up0123456789ab"))
     }
 
     @Test
     fun `recovers the websocket url from a persisted endpoint`() {
         assertEquals(
-            "wss://ntfy.sh/upabc123/ws",
-            EmbeddedPushEndpoint.webSocketUrlForEndpoint("https://ntfy.sh/upabc123"),
+            "wss://ntfy.sh/up0123456789ab/ws",
+            EmbeddedPushEndpoint.webSocketUrlForEndpoint("https://ntfy.sh/up0123456789ab"),
         )
         assertEquals(
-            "wss://push.example.org/base/upabc123/ws",
-            EmbeddedPushEndpoint.webSocketUrlForEndpoint("https://push.example.org/base/upabc123"),
+            "wss://push.example.org/base/up0123456789ab/ws",
+            EmbeddedPushEndpoint.webSocketUrlForEndpoint("https://push.example.org/base/up0123456789ab"),
+        )
+    }
+
+    @Test
+    fun `recovers the websocket url from a UnifiedPush endpoint`() {
+        assertEquals(
+            "wss://push.example.org/base/up0123456789ab/ws",
+            EmbeddedPushEndpoint.webSocketUrlForEndpoint("https://push.example.org/base/up0123456789ab?up=1"),
         )
     }
 

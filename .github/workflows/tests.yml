@@ -103,7 +103,7 @@ jobs:
           targets: aarch64-linux-android
 
       - name: Build Android bindings
-        run: cargo build --target aarch64-linux-android
+        run: cargo build --target aarch64-linux-android --features push-notifications
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew

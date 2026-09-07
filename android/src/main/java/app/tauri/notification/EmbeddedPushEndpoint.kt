@@ -9,22 +9,24 @@ internal object EmbeddedPushEndpoint {
     /** Gateways only grant anonymous write access under `up*`; other topics reject the push. */
     const val TOPIC_PREFIX = "up"
 
-    private const val TOPIC_RANDOM_BYTES = 12
+    private const val TOPIC_RANDOM_LENGTH = 12
+    private const val TOPIC_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     private const val WS_PATH = "ws"
     private const val ENCODING_BASE64 = "base64"
 
     fun generateTopic(random: SecureRandom = SecureRandom()): String {
-        val bytes = ByteArray(TOPIC_RANDOM_BYTES)
-        random.nextBytes(bytes)
-        val body = bytes.joinToString("") { "%02x".format(it) }
-        return TOPIC_PREFIX + body
+        return TOPIC_PREFIX + buildString {
+            repeat(TOPIC_RANDOM_LENGTH) {
+                append(TOPIC_ALPHABET[random.nextInt(TOPIC_ALPHABET.length)])
+            }
+        }
     }
 
     fun isValidTopic(topic: String?): Boolean =
         topic != null &&
             topic.startsWith(TOPIC_PREFIX) &&
-            topic.length > TOPIC_PREFIX.length &&
-            topic.all { it.isLetterOrDigit() || it == '_' || it == '-' }
+            topic.length == TOPIC_PREFIX.length + TOPIC_RANDOM_LENGTH &&
+            topic.all { it in TOPIC_ALPHABET }
 
     fun normalizeGateway(raw: String?): String? {
         val trimmed = raw?.trim()?.trimEnd('/') ?: return null
@@ -41,11 +43,11 @@ internal object EmbeddedPushEndpoint {
     fun endpointUrl(gateway: String, topic: String): String? {
         val base = normalizeGateway(gateway) ?: return null
         if (!isValidTopic(topic)) return null
-        return "$base/$topic"
+        return "$base/$topic?up=1"
     }
 
     fun webSocketUrl(gateway: String, topic: String): String? {
-        val endpoint = endpointUrl(gateway, topic) ?: return null
+        val endpoint = endpointUrl(gateway, topic)?.substringBefore('?') ?: return null
         val wsEndpoint = when {
             endpoint.startsWith("https://") -> "wss://" + endpoint.removePrefix("https://")
             else -> "ws://" + endpoint.removePrefix("http://")
@@ -76,7 +78,7 @@ internal object EmbeddedPushEndpoint {
     }
 
     fun webSocketUrlForEndpoint(endpoint: String?): String? {
-        val trimmed = endpoint?.trim()?.trimEnd('/') ?: return null
+        val trimmed = endpoint?.trim()?.substringBefore('?')?.trimEnd('/') ?: return null
         val topic = trimmed.substringAfterLast('/', missingDelimiterValue = "")
         if (!isValidTopic(topic)) return null
         val gateway = trimmed.removeSuffix("/$topic")
