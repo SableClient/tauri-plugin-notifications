@@ -1,16 +1,21 @@
 package app.tauri.notification
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.IntentFilter
 import android.os.Looper
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import io.mockk.Runs
 import io.mockk.spyk
 import io.mockk.verify
 import java.time.Duration
+import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -34,9 +39,14 @@ class EmbeddedPushRegistrationTest {
     @Before
     fun setup() {
         assumeTrue(BuildConfig.ENABLE_PUSH_NOTIFICATIONS)
+        mockkObject(CachedKeyManager.Companion)
+        every { CachedKeyManager.getInstance(any()) } returns mockk(relaxed = true) {
+            every { getPublicKeySet(any()) } returns null
+        }
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         state = UnifiedPushStateStore(activity)
         state.useEmbeddedDistributor = true
+        PushDiagnostics.drain(activity)
         plugin = spyk(NotificationPlugin(activity))
         every { plugin.trigger(any(), any<JSObject>()) } just Runs
         val manager = mockk<TauriNotificationManager>()
@@ -55,6 +65,7 @@ class EmbeddedPushRegistrationTest {
     @After
     fun teardown() {
         if (::plugin.isInitialized) plugin.onDestroy()
+        unmockkObject(CachedKeyManager.Companion)
     }
 
     @Test
@@ -94,8 +105,38 @@ class EmbeddedPushRegistrationTest {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
         plugin.onEmbeddedPushReady(state.endpoint!!)
 
+        assertEquals(1, PushDiagnostics.drain(org.robolectric.RuntimeEnvironment.getApplication()).counts["EMBEDDED_REGISTRATION_TIMEOUT"])
         verify(exactly = 1) { invoke.reject("Timed out registering for push notifications") }
         verify(exactly = 0) { invoke.resolve(any<JSObject>()) }
+    }
+
+    @Test
+    fun switchesFromBuiltInToExternalDistributor() {
+        val application = org.robolectric.RuntimeEnvironment.getApplication()
+        val component = ComponentName("io.heckel.ntfy", "PushReceiver")
+        val packages = shadowOf(application.packageManager)
+        packages.addReceiverIfNotPresent(component).exported = true
+        packages.addIntentFilterForReceiver(
+            component, IntentFilter("org.unifiedpush.android.distributor.REGISTER"),
+        )
+        assertEquals(listOf("io.heckel.ntfy"), org.unifiedpush.android.connector.UnifiedPush.getDistributors(application))
+        plugin.registerForPushNotifications(invoke)
+        plugin.onEmbeddedPushReady(state.endpoint!!)
+        val selection = mockk<Invoke>(relaxed = true)
+        every { selection.parseArgs(DistributorArgs::class.java) } returns DistributorArgs().apply {
+            distributor = "io.heckel.ntfy"
+        }
+        plugin.setDistributor(selection)
+        assertFalse(state.useEmbeddedDistributor)
+        plugin.registerForPushNotifications(invoke)
+        verify(exactly = 0) { invoke.reject(any<String>()) }
+        val externalEndpoint = "https://ntfy.sh/up0123456789ab?up=1"
+        plugin.onUnifiedPushNewEndpoint(externalEndpoint, "external-key", "external-auth", UnifiedPushStateStore.INSTANCE)
+
+        assertEquals("unifiedpush", state.activeProvider)
+        assertEquals("io.heckel.ntfy", state.distributor)
+        assertEquals(externalEndpoint, state.endpoint)
+        verify { invoke.resolve(match<JSObject> { it.optString("deviceToken") == externalEndpoint }) }
     }
 
     @Test

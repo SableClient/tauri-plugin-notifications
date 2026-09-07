@@ -11,6 +11,15 @@ internal enum class PushOutcome {
     NO_NATIVE_LIB,
     DECRYPT_FAILED,
     EMPTY_BODY,
+    EMBEDDED_STARTED,
+    EMBEDDED_READY,
+    EMBEDDED_SOCKET_FAILED,
+    EMBEDDED_HTTP_REJECTED,
+    EMBEDDED_CLOSED,
+    EMBEDDED_MESSAGE_RECEIVED,
+    EMBEDDED_DECRYPTED,
+    EMBEDDED_DECRYPT_FAILED,
+    EMBEDDED_REGISTRATION_TIMEOUT,
 }
 
 internal data class PushDiagnosticsSnapshot(
@@ -25,6 +34,7 @@ internal object PushDiagnostics {
     private const val KEY_LAST = "push-outcome-last"
     private const val KEY_LAST_AT = "push-outcome-last-at"
 
+    @Synchronized
     fun record(context: Context, outcome: PushOutcome) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val key = KEY_PREFIX + outcome.name
@@ -35,6 +45,7 @@ internal object PushDiagnostics {
             .apply()
     }
 
+    @Synchronized
     fun drain(context: Context): PushDiagnosticsSnapshot {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val counts = PushOutcome.entries.associate { outcome ->

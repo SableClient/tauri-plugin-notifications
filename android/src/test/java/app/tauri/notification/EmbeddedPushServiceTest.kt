@@ -42,6 +42,7 @@ class EmbeddedPushServiceTest {
         state.endpoint = endpoint
         plugin = mockk(relaxed = true)
         NotificationPlugin.instance = plugin
+        PushDiagnostics.drain(service)
         val client = mockk<OkHttpClient>(relaxed = true)
         every { client.newWebSocket(any(), any()) } answers {
             val socket = mockk<WebSocket>(relaxed = true)
@@ -78,11 +79,13 @@ class EmbeddedPushServiceTest {
         listener.onOpen(socket, mockk())
         shadowOf(Looper.getMainLooper()).idle()
         verify(exactly = 0) { plugin.onEmbeddedPushReady(any()) }
+        assertEquals(mapOf("EMBEDDED_STARTED" to 1), PushDiagnostics.drain(service).counts)
 
         frame(0, """{"event":"open"}""")
 
         verify(exactly = 1) { plugin.onEmbeddedPushReady(endpoint) }
         assertEquals(listOf("https://ntfy.sh/up0123456789ab/ws"), urls)
+        assertEquals(mapOf("EMBEDDED_READY" to 1), PushDiagnostics.drain(service).counts)
     }
 
     @Test
@@ -107,6 +110,9 @@ class EmbeddedPushServiceTest {
         executor.submit {}.get(5, TimeUnit.SECONDS)
         shadowOf(Looper.getMainLooper()).idle()
         verify(exactly = 1) { plugin.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) }
+        val counts = PushDiagnostics.drain(service).counts
+        assertEquals(1, counts["EMBEDDED_MESSAGE_RECEIVED"])
+        assertEquals(1, counts["EMBEDDED_DECRYPTED"])
     }
 
     @Test
@@ -145,6 +151,8 @@ class EmbeddedPushServiceTest {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
         assertEquals(2, connections.size)
+        assertEquals(1, PushDiagnostics.drain(service).counts["EMBEDDED_SOCKET_FAILED"])
+        assertEquals(emptyMap(), PushDiagnostics.drain(service).counts)
     }
 
     @Test

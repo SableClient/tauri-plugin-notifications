@@ -946,6 +946,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
         if (registration.phase == PushRegistrationPhase.UNIFIED_PUSH || registration.phase == PushRegistrationPhase.DISTRIBUTOR) {
           retireUnifiedPush(registration.instance)
         }
+        if (registration.phase == PushRegistrationPhase.EMBEDDED) {
+          PushDiagnostics.record(activity, PushOutcome.EMBEDDED_REGISTRATION_TIMEOUT)
+        }
         finishPushRegistrationError("Timed out registering for push notifications")
       }
     }
