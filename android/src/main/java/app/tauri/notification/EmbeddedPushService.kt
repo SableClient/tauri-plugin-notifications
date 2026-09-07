@@ -52,6 +52,7 @@ class EmbeddedPushService : Service() {
         }
 
         if (endpoint != nextEndpoint) {
+            PushDiagnostics.record(this, PushOutcome.EMBEDDED_STARTED)
             handler.removeCallbacksAndMessages(null)
             socket?.cancel()
             socket = null
@@ -110,14 +111,18 @@ class EmbeddedPushService : Service() {
                 }
                 if (event == "open") {
                     Log.i(TAG, "Push gateway subscription ready")
+                    PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_READY)
                     ready = true
                     retryDelay = BASE_BACKOFF_MS
                     endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
                     return@post
                 }
+                if (event != "message") return@post
+                PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_MESSAGE_RECEIVED)
                 val sealed = EmbeddedPushEndpoint.pushBody(text) ?: return@post
                 pushExecutor.execute {
                     val body = decrypt(sealed) ?: return@execute
+                    PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_DECRYPTED)
                     runCatching { UnifiedPushNotifier.showFromPush(this@EmbeddedPushService, body) }
                         .onFailure { Log.w(TAG, "Could not display the push notification") }
                     handler.post {
@@ -130,7 +135,7 @@ class EmbeddedPushService : Service() {
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            disconnected(webSocket)
+            disconnected(webSocket, if (response != null) PushOutcome.EMBEDDED_HTTP_REJECTED else PushOutcome.EMBEDDED_SOCKET_FAILED)
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -138,12 +143,13 @@ class EmbeddedPushService : Service() {
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            disconnected(webSocket)
+            disconnected(webSocket, PushOutcome.EMBEDDED_CLOSED)
         }
 
-        private fun disconnected(webSocket: WebSocket) {
+        private fun disconnected(webSocket: WebSocket, outcome: PushOutcome) {
             handler.post {
                 if (closing || socket !== webSocket) return@post
+                PushDiagnostics.record(this@EmbeddedPushService, outcome)
                 socket = null
                 ready = false
                 scheduleReconnect(url)
@@ -158,6 +164,7 @@ class EmbeddedPushService : Service() {
         // A plaintext relay is used for testing; not a failure worth logging.
         if (sealed.isNotEmpty() && sealed[0] == '{'.code.toByte()) return String(sealed)
 
+        PushDiagnostics.record(this, PushOutcome.EMBEDDED_DECRYPT_FAILED)
         Log.w(TAG, "Could not decrypt the push body")
         return null
     }
