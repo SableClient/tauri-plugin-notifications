@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -28,12 +30,54 @@ import org.json.JSONObject
 class EmbeddedPushService : Service() {
     private var client: OkHttpClient? = null
     private var socket: WebSocket? = null
-    private var closing = false
+    @Volatile private var closing = false
     private var retryDelay = BASE_BACKOFF_MS
     private val handler = Handler(Looper.getMainLooper())
     private var endpoint: String? = null
+    private var activeSubscription: Subscription? = null
     private var ready = false
     private val pushExecutor = Executors.newSingleThreadExecutor()
+    private var reconnect: Runnable? = null
+    private var currentNetwork: Network? = null
+    private var connectivity: ConnectivityManager? = null
+    private val inFlight = mutableSetOf<Pair<Subscription, String>>()
+
+    private data class Subscription(val endpoint: String, val userId: String?, val deviceId: String?)
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            handler.post {
+                if (closing || network == currentNetwork) return@post
+                currentNetwork = network
+                val url = EmbeddedPushEndpoint.webSocketUrlForEndpoint(endpoint) ?: return@post
+                cancelReconnect()
+                retryDelay = BASE_BACKOFF_MS
+                socket?.cancel()
+                socket = null
+                ready = false
+                connect(url)
+            }
+        }
+
+        override fun onLost(network: Network) {
+            handler.post {
+                if (currentNetwork == network) currentNetwork = null
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        val manager = getSystemService(ConnectivityManager::class.java)
+        currentNetwork = manager.activeNetwork
+        manager.registerDefaultNetworkCallback(networkCallback)
+        connectivity = manager
+    }
+
+    private fun cancelReconnect() {
+        reconnect?.let { handler.removeCallbacks(it) }
+        reconnect = null
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -51,17 +95,25 @@ class EmbeddedPushService : Service() {
             return START_NOT_STICKY
         }
 
-        if (endpoint != nextEndpoint) {
+        val nextSubscription = Subscription(nextEndpoint!!, state.pushUserId, state.pushDeviceId)
+        if (activeSubscription != nextSubscription) {
+            activeSubscription = nextSubscription
             PushDiagnostics.record(this, PushOutcome.EMBEDDED_STARTED)
-            handler.removeCallbacksAndMessages(null)
+            cancelReconnect()
             socket?.cancel()
             socket = null
             ready = false
             endpoint = nextEndpoint
             retryDelay = BASE_BACKOFF_MS
         }
+        if (intent?.getBooleanExtra("replay", false) == true) {
+            cancelReconnect()
+            socket?.cancel()
+            socket = null
+            ready = false
+        }
         if (socket == null) {
-            handler.removeCallbacksAndMessages(null)
+            cancelReconnect()
             connect(url)
         } else if (ready) {
             endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
@@ -71,7 +123,9 @@ class EmbeddedPushService : Service() {
 
     override fun onDestroy() {
         closing = true
-        handler.removeCallbacksAndMessages(null)
+        connectivity?.unregisterNetworkCallback(networkCallback)
+        connectivity = null
+        cancelReconnect()
         ready = false
         socket?.close(NORMAL_CLOSURE, null)
         socket = null
@@ -89,7 +143,11 @@ class EmbeddedPushService : Service() {
             .build()
             .also { client = it }
 
-        socket = http.newWebSocket(Request.Builder().url(url).build(), Listener(url))
+        val state = UnifiedPushStateStore(this)
+        if (state.activeProvider != "embedded" || state.endpoint != endpoint) return
+        val owner = Subscription(state.endpoint ?: return, state.pushUserId, state.pushDeviceId)
+        val requestUrl = Request.Builder().url(url).build().url.newBuilder().addQueryParameter("since", "12h").build()
+        socket = http.newWebSocket(Request.Builder().url(requestUrl).build(), Listener(url, owner))
     }
 
     private fun scheduleReconnect(url: String) {
@@ -97,38 +155,106 @@ class EmbeddedPushService : Service() {
         val delay = retryDelay
         retryDelay = (retryDelay * 2).coerceAtMost(MAX_BACKOFF_MS)
         Log.i(TAG, "Reconnecting to the push gateway in ${delay}ms")
-        handler.postDelayed({ if (!closing && socket == null) connect(url) }, delay)
+        cancelReconnect()
+        reconnect = Runnable {
+            reconnect = null
+            if (!closing && socket == null) connect(url)
+        }.also { handler.postDelayed(it, delay) }
     }
 
-    private inner class Listener(private val url: String) : WebSocketListener() {
+    private fun owns(owner: Subscription): Boolean {
+        val state = UnifiedPushStateStore(this)
+        return !closing && state.activeProvider == "embedded" && state.endpoint == owner.endpoint &&
+            state.pushUserId == owner.userId && state.pushDeviceId == owner.deviceId
+    }
+
+    private fun processMessage(owner: Subscription, text: String, json: JSONObject) {
+        val id = json.optString("id").takeIf { it.isNotEmpty() } ?: return
+        val key = owner to id
+        if (!owns(owner) || !inFlight.add(key)) return
+        val state = UnifiedPushStateStore(this)
+        pushExecutor.execute {
+            if (!owns(owner) || !state.shouldProcessEmbeddedPush(owner.endpoint, id, json.optLong("time"))) {
+                handler.post { inFlight.remove(key) }
+                return@execute
+            }
+            val sealed = EmbeddedPushEndpoint.pushBody(text)
+            if (sealed == null) {
+                state.completeEmbeddedPush(owner.endpoint, id)
+                handler.post { inFlight.remove(key) }
+                return@execute
+            }
+            val body = decrypt(sealed)
+            if (body == null || !owns(owner)) {
+                handler.post { inFlight.remove(key) }
+                return@execute
+            }
+            PushDiagnostics.record(this, PushOutcome.EMBEDDED_DECRYPTED)
+            val payload = MatrixPushPayload.parse(body)
+            val activation = payload?.optString("ack_token")?.isNotEmpty() == true
+            try {
+                UnifiedPushNotifier.showFromPush(this, body)
+            } catch (_: Exception) {
+                Log.w(TAG, "Could not display the push notification")
+                handler.post { inFlight.remove(key) }
+                return@execute
+            }
+            handler.post {
+                if (!owns(owner)) {
+                    inFlight.remove(key)
+                    return@post
+                }
+                val dispatched = try {
+                    NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) == true
+                } catch (_: Exception) {
+                    inFlight.remove(key)
+                    return@post
+                }
+                if (activation && !dispatched) {
+                    inFlight.remove(key)
+                    return@post
+                }
+                pushExecutor.execute {
+                    if (owns(owner) && !state.completeEmbeddedPush(owner.endpoint, id)) {
+                        Log.w(TAG, "Could not persist push completion")
+                    }
+                    handler.post { inFlight.remove(key) }
+                }
+            }
+        }
+    }
+
+    private inner class Listener(private val url: String, private val owner: Subscription) : WebSocketListener() {
+        private val pending = mutableListOf<Pair<String, JSONObject>>()
+
         override fun onMessage(webSocket: WebSocket, text: String) {
             handler.post {
                 if (closing || socket !== webSocket) return@post
-                val event = try {
-                    JSONObject(text).optString("event")
-                } catch (_: Exception) {
-                    return@post
-                }
-                if (event == "open") {
-                    Log.i(TAG, "Push gateway subscription ready")
-                    PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_READY)
-                    ready = true
-                    retryDelay = BASE_BACKOFF_MS
-                    endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
-                    return@post
-                }
-                if (event != "message") return@post
-                PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_MESSAGE_RECEIVED)
-                val sealed = EmbeddedPushEndpoint.pushBody(text) ?: return@post
-                pushExecutor.execute {
-                    val body = decrypt(sealed) ?: return@execute
-                    PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_DECRYPTED)
-                    runCatching { UnifiedPushNotifier.showFromPush(this@EmbeddedPushService, body) }
-                        .onFailure { Log.w(TAG, "Could not display the push notification") }
-                    handler.post {
-                        if (!closing && socket === webSocket) {
-                            NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
+                val json = try { JSONObject(text) } catch (_: Exception) { return@post }
+                when (json.optString("event")) {
+                    "open" -> {
+                        pushExecutor.execute {
+                            val initialized = UnifiedPushStateStore(this@EmbeddedPushService)
+                                .initializeEmbeddedReplay(owner.endpoint, json.optLong("time"))
+                            handler.post ready@{
+                                if (!owns(owner) || socket !== webSocket) return@ready
+                                if (!initialized) {
+                                    webSocket.cancel()
+                                    return@ready
+                                }
+                                Log.i(TAG, "Push gateway subscription ready")
+                                PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_READY)
+                                ready = true
+                                retryDelay = BASE_BACKOFF_MS
+                                NotificationPlugin.instance?.onEmbeddedPushReady(owner.endpoint)
+                                pending.forEach { (frame, payload) -> processMessage(owner, frame, payload) }
+                                pending.clear()
+                            }
                         }
+                    }
+                    "message" -> {
+                        PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_MESSAGE_RECEIVED)
+                        if (ready) processMessage(owner, text, json) else pending.add(text to json)
                     }
                 }
             }
@@ -208,10 +334,10 @@ class EmbeddedPushService : Service() {
         private const val NORMAL_CLOSURE = 1000
         private const val PING_SECONDS = 30L
         private const val BASE_BACKOFF_MS = 1_000L
-        private const val MAX_BACKOFF_MS = 300_000L
+        private const val MAX_BACKOFF_MS = 120_000L
 
-        fun start(context: Context) {
-            val intent = Intent(context, EmbeddedPushService::class.java)
+        fun start(context: Context, replay: Boolean = false) {
+            val intent = Intent(context, EmbeddedPushService::class.java).putExtra("replay", replay)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

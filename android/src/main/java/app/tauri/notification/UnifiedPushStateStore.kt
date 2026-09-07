@@ -1,6 +1,7 @@
 package app.tauri.notification
 
 import android.content.Context
+import org.json.JSONObject
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.UUID
 
@@ -50,7 +51,55 @@ internal class UnifiedPushStateStore(private val context: Context) {
     get() = prefs.getString("up-embedded-topic", null)
     set(value) = prefs.edit().putString("up-embedded-topic", value).apply()
 
-  fun clearRegistration() {
+  fun prepareEmbeddedReplay(endpoint: String, freshTopic: Boolean) = synchronized(REPLAY_LOCK) {
+    if (prefs.getString("up-replay-endpoint", null) != endpoint) {
+      prefs.edit()
+        .putString("up-replay-endpoint", endpoint)
+        .putLong("up-replay-start", if (freshTopic) 0 else -1)
+        .remove("up-replay-completed")
+        .apply()
+    }
+  }
+
+  fun initializeEmbeddedReplay(endpoint: String, serverTime: Long): Boolean = synchronized(REPLAY_LOCK) {
+    if (this.endpoint != endpoint || serverTime <= 0) return@synchronized false
+    val sameEndpoint = prefs.getString("up-replay-endpoint", null) == endpoint
+    val start = if (sameEndpoint) prefs.getLong("up-replay-start", -1) else -1
+    prefs.edit()
+      .putString("up-replay-endpoint", endpoint)
+      .putLong("up-replay-start", if (start >= 0) start else serverTime)
+      .also { if (!sameEndpoint) it.remove("up-replay-completed") }
+      .commit()
+  }
+
+  fun shouldProcessEmbeddedPush(endpoint: String, id: String, serverTime: Long): Boolean = synchronized(REPLAY_LOCK) {
+    if (this.endpoint != endpoint || prefs.getString("up-replay-endpoint", null) != endpoint) {
+      return@synchronized false
+    }
+    val start = prefs.getLong("up-replay-start", -1)
+    start >= 0 && serverTime >= start && !completedEmbeddedPushes().has(id)
+  }
+
+  fun completeEmbeddedPush(endpoint: String, id: String): Boolean = synchronized(REPLAY_LOCK) {
+    if (this.endpoint != endpoint || prefs.getString("up-replay-endpoint", null) != endpoint) {
+      return@synchronized false
+    }
+    val completed = completedEmbeddedPushes()
+    val now = System.currentTimeMillis()
+    completed.keys().asSequence().toList().forEach { key ->
+      if (completed.optLong(key) < now - REPLAY_RETENTION_MS) completed.remove(key)
+    }
+    completed.put(id, now)
+    prefs.edit().putString("up-replay-completed", completed.toString()).commit()
+  }
+
+  private fun completedEmbeddedPushes(): JSONObject = try {
+    JSONObject(prefs.getString("up-replay-completed", "{}") ?: "{}")
+  } catch (_: Exception) {
+    JSONObject()
+  }
+
+  fun clearRegistration() = synchronized(REPLAY_LOCK) {
     prefs.edit()
       .remove("push-instance")
       .remove("up-endpoint")
@@ -59,6 +108,9 @@ internal class UnifiedPushStateStore(private val context: Context) {
       .remove("up-distributor")
       .remove("up-vapid")
       .remove("up-embedded-topic")
+      .remove("up-replay-endpoint")
+      .remove("up-replay-start")
+      .remove("up-replay-completed")
       .apply()
   }
   /** Mirrors the app's "show encrypted message content" setting. */
@@ -83,5 +135,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
 
   companion object {
     const val INSTANCE = "default"
+    private val REPLAY_LOCK = Any()
+    private const val REPLAY_RETENTION_MS = 24 * 60 * 60 * 1000L
   }
 }
