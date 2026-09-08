@@ -1,6 +1,7 @@
 package app.tauri.notification
 
 import android.net.ConnectivityManager
+import android.app.NotificationManager
 import android.os.Looper
 import android.util.Base64
 import com.google.crypto.tink.apps.fixed_webpush.WebPushHybridEncrypt
@@ -15,6 +16,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -117,6 +120,58 @@ class EmbeddedPushServiceTest {
         val counts = PushDiagnostics.drain(service).counts
         assertEquals(1, counts["EMBEDDED_MESSAGE_RECEIVED"])
         assertEquals(1, counts["EMBEDDED_DECRYPTED"])
+    }
+
+    @Test
+    fun decryptsMatrixPushAndRendersAndroidNotification() {
+        val body = deliverMatrixPush()
+        assertRenderedMatrixNotification()
+        verify(exactly = 1) { plugin.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) }
+    }
+
+    @Test
+    fun decryptsMatrixPushAndRendersAndroidNotificationWithoutJsListener() {
+        NotificationPlugin.instance = null
+
+        deliverMatrixPush("matrix-background-event")
+        assertRenderedMatrixNotification()
+    }
+
+    private fun deliverMatrixPush(id: String = "matrix-event"): String {
+        val keys = EmbeddedWebPushKeys.publicKeys(service)!!
+        val flags = Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+        val body = org.json.JSONObject()
+            .put("user_id", "@alice:example.org")
+            .put("ack_token", id)
+            .put("notification", org.json.JSONObject()
+                .put("room_id", "!room:example.org")
+                .put("event_id", "\$event")
+                .put("room_name", "A room")
+                .put("sender_display_name", "Alice")
+                .put("type", "m.room.message")
+                .put("content", org.json.JSONObject().put("body", "Hello from Matrix")))
+            .toString()
+        val sealed = WebPushHybridEncrypt.Builder()
+            .withAuthSecret(Base64.decode(keys.auth, flags))
+            .withRecipientPublicKey(Base64.decode(keys.p256dh, flags))
+            .build()
+            .encrypt(body.toByteArray(), null)
+        val encoded = Base64.encodeToString(sealed, Base64.NO_WRAP)
+
+        start()
+        frame(0, """{"event":"open","time":100}""")
+        frame(0, """{"event":"message","id":"$id","time":200,"encoding":"base64","message":"$encoded"}""")
+
+        return body
+    }
+
+    private fun assertRenderedMatrixNotification() {
+        val notificationId = UnifiedPushNotifier.roomNotificationId("@alice:example.org", "!room:example.org")
+        val manager = service.getSystemService(NotificationManager::class.java)
+        val notification = shadowOf(manager).getNotification(null, notificationId)
+        assertNotNull(notification)
+        assertTrue(notification!!.extras.getString(android.app.Notification.EXTRA_TITLE).orEmpty().contains("A room"))
+        assertTrue(notification.extras.getString(android.app.Notification.EXTRA_TEXT).orEmpty().contains("Hello from Matrix"))
     }
 
     private fun finishWork() {

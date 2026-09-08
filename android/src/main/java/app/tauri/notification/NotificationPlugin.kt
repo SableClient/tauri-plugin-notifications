@@ -133,7 +133,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     var phase: PushRegistrationPhase,
     val invoke: Invoke,
     val generation: Long,
-    var timeout: Runnable? = null
+    var timeout: Runnable? = null,
+    var embeddedPreviousRegistration: UnifiedPushStateStore.Registration? = null,
   )
 
   private enum class PushRegistrationPhase { PERMISSION, DISTRIBUTOR, UNIFIED_PUSH, FCM, EMBEDDED }
@@ -552,7 +553,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
 
     // Checked before any installed distributor: the user asked for this one explicitly.
-    if (registration.provider != "fcm" && unifiedPushState.useEmbeddedDistributor) {
+    if (registration.provider == "embedded" ||
+      (registration.provider != "fcm" && unifiedPushState.useEmbeddedDistributor)) {
       if (!startEmbeddedPushRegistration(registration)) {
         finishPushRegistrationError(
           "The built-in distributor needs a gateway; set the built-in distributor server first"
@@ -649,6 +651,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val keys = EmbeddedWebPushKeys.publicKeys(activity)
 
     registration.phase = PushRegistrationPhase.EMBEDDED
+    registration.embeddedPreviousRegistration = unifiedPushState.snapshotRegistration()
     unifiedPushState.embeddedTopic = topic
     unifiedPushState.endpoint = endpoint
     unifiedPushState.prepareEmbeddedReplay(endpoint, savedTopic == null)
@@ -695,12 +698,26 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
+    val pendingEmbeddedPush = pendingPushRegistration?.takeIf {
+      it.phase == PushRegistrationPhase.EMBEDDED
+    }
     val pendingUnifiedPush = pendingPushRegistration?.takeIf {
       it.phase == PushRegistrationPhase.UNIFIED_PUSH || it.phase == PushRegistrationPhase.DISTRIBUTOR
     }
     val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE
-    finishPushRegistrationError("Push registration cancelled by unregister")
+    finishPushRegistrationError("Push registration cancelled by unregister", restoreEmbeddedRegistration = false)
     EmbeddedPushService.stop(activity)
+
+    if (pendingEmbeddedPush != null) {
+      invoke.resolve()
+      return
+    }
+
+    if (unifiedPushState.activeProvider == "embedded") {
+      unifiedPushState.clearRegistration(clearProvider = true)
+      invoke.resolve()
+      return
+    }
 
     if (pendingUnifiedPush != null || unifiedPushState.activeProvider == "unifiedpush") {
       try {
@@ -797,7 +814,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       // here would also wipe it, since unregister() drops every distributor
       // once the last instance is removed.
       unifiedPushGeneration++
-      if (unifiedPushState.activeProvider == "unifiedpush") unifiedPushState.activeProvider = null
+      if (unifiedPushState.activeProvider in setOf("unifiedpush", "embedded")) {
+        unifiedPushState.activeProvider = null
+      }
       unifiedPushState.clearRegistration()
     }
     UnifiedPush.saveDistributor(activity, distributor)
@@ -931,13 +950,23 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val registration = pendingPushRegistration ?: return
     pendingPushRegistration = null
     registration.timeout?.let { mainHandler.removeCallbacks(it) }
+    registration.embeddedPreviousRegistration = null
     registration.invoke.resolve(result)
   }
 
-  private fun finishPushRegistrationError(message: String) {
+  private fun finishPushRegistrationError(message: String, restoreEmbeddedRegistration: Boolean = true) {
     val registration = pendingPushRegistration ?: return
     pendingPushRegistration = null
     registration.timeout?.let { mainHandler.removeCallbacks(it) }
+    registration.embeddedPreviousRegistration?.let {
+      EmbeddedPushService.stop(activity)
+      if (restoreEmbeddedRegistration) {
+        unifiedPushState.restoreRegistration(it)
+        if (it.activeProvider == "embedded") EmbeddedPushService.start(activity)
+      } else {
+        unifiedPushState.clearRegistration(clearProvider = true)
+      }
+    }
     registration.invoke.reject(message)
   }
 
