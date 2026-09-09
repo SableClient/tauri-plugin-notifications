@@ -10,7 +10,8 @@ class EmbeddedPushBootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
 
         val state = UnifiedPushStateStore(context)
-        if (state.distributor != NotificationPlugin.EMBEDDED_DISTRIBUTOR) return
+        if (state.activeProvider != "embedded" ||
+            state.distributor != NotificationPlugin.EMBEDDED_DISTRIBUTOR) return
         if (EmbeddedPushEndpoint.webSocketUrlForEndpoint(state.endpoint) == null) return
 
         EmbeddedPushService.start(context)

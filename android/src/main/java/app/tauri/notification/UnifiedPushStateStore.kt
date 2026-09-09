@@ -8,6 +8,20 @@ import java.util.UUID
 internal class UnifiedPushStateStore(private val context: Context) {
   private val prefs = context.getSharedPreferences("tauri-notifications", Context.MODE_PRIVATE)
 
+  data class Registration(
+    val activeProvider: String?,
+    val activeInstance: String?,
+    val endpoint: String?,
+    val p256dh: String?,
+    val auth: String?,
+    val distributor: String?,
+    val vapid: String?,
+    val embeddedTopic: String?,
+    val replayEndpoint: String?,
+    val replayStart: Long,
+    val replayCompleted: String?,
+  )
+
   var activeProvider: String?
     get() = prefs.getString("push-provider", null)?.takeUnless { it == "none" }
       ?: if (!prefs.contains("push-provider") && UnifiedPush.getSavedDistributor(context) != null) "unifiedpush" else null
@@ -99,8 +113,9 @@ internal class UnifiedPushStateStore(private val context: Context) {
     JSONObject()
   }
 
-  fun clearRegistration() = synchronized(REPLAY_LOCK) {
+  fun clearRegistration(clearProvider: Boolean = false) = synchronized(REPLAY_LOCK) {
     prefs.edit()
+      .also { if (clearProvider) it.putString("push-provider", "none") }
       .remove("push-instance")
       .remove("up-endpoint")
       .remove("up-p256dh")
@@ -113,6 +128,46 @@ internal class UnifiedPushStateStore(private val context: Context) {
       .remove("up-replay-completed")
       .apply()
   }
+
+  fun snapshotRegistration() = Registration(
+    activeProvider,
+    activeInstance,
+    endpoint,
+    p256dh,
+    auth,
+    distributor,
+    vapid,
+    embeddedTopic,
+    prefs.getString("up-replay-endpoint", null),
+    prefs.getLong("up-replay-start", -1),
+    prefs.getString("up-replay-completed", null),
+  )
+
+  fun restoreRegistration(registration: Registration) = synchronized(REPLAY_LOCK) {
+    prefs.edit()
+      .putString("push-provider", registration.activeProvider ?: "none")
+      .putString("push-instance", registration.activeInstance ?: INSTANCE)
+      .also { edit ->
+        mapOf(
+          "up-endpoint" to registration.endpoint,
+          "up-p256dh" to registration.p256dh,
+          "up-auth" to registration.auth,
+          "up-distributor" to registration.distributor,
+          "up-vapid" to registration.vapid,
+          "up-embedded-topic" to registration.embeddedTopic,
+        ).forEach { (key, value) -> if (value == null) edit.remove(key) else edit.putString(key, value) }
+      }
+      .also { edit ->
+        if (registration.replayEndpoint == null) edit.remove("up-replay-endpoint")
+        else edit.putString("up-replay-endpoint", registration.replayEndpoint)
+        if (registration.replayStart < 0) edit.remove("up-replay-start")
+        else edit.putLong("up-replay-start", registration.replayStart)
+        if (registration.replayCompleted == null) edit.remove("up-replay-completed")
+        else edit.putString("up-replay-completed", registration.replayCompleted)
+      }
+      .apply()
+  }
+
   /** Mirrors the app's "show encrypted message content" setting. */
   var showEncryptedContent: Boolean
     get() = prefs.getBoolean("up-show-encrypted", false)
