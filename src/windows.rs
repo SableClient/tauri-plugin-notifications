@@ -1071,6 +1071,14 @@ impl<R: Runtime> Notifications<R> {
     }
 
     #[allow(clippy::unused_self)]
+    pub fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    pub fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
     pub fn take_push_diagnostics(&self) -> crate::Result<crate::models::PushDiagnostics> {
         Ok(crate::models::PushDiagnostics::default())
     }

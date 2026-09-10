@@ -41,6 +41,12 @@ pub struct DistributorsResponse {
     pub distributors: Vec<String>,
 }
 
+#[cfg(all(target_os = "android", feature = "push-notifications"))]
+#[derive(Debug, Deserialize)]
+pub struct BatteryOptimizationResponse {
+    pub ignoring: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushDiagnostics {

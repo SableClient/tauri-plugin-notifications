@@ -6,9 +6,12 @@ import android.app.Activity
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.webkit.WebView
 import app.tauri.PermissionState
 import app.tauri.annotation.Command
@@ -1108,6 +1111,27 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val args = invoke.parseArgs(SetEncryptedContentAllowedArgs::class.java)
     unifiedPushState.showEncryptedContent = args.allowed
     invoke.resolve()
+  }
+
+  @Command
+  fun isIgnoringBatteryOptimizations(invoke: Invoke) {
+    val manager = activity.getSystemService(Context.POWER_SERVICE) as PowerManager
+    val result = JSObject()
+    result.put("ignoring", manager.isIgnoringBatteryOptimizations(activity.packageName))
+    invoke.resolve(result)
+  }
+
+  @Command
+  fun requestIgnoreBatteryOptimizations(invoke: Invoke) {
+    try {
+      activity.startActivity(
+        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+          .setData(Uri.parse("package:${activity.packageName}")),
+      )
+      invoke.resolve()
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Could not open the battery optimization prompt")
+    }
   }
 
   @Command

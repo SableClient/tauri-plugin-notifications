@@ -35,6 +35,8 @@ It allows all notification related features.
 - `allow-set-push-message-listener-active`
 - `allow-set-encrypted-content-allowed`
 - `allow-take-push-diagnostics`
+- `allow-is-ignoring-battery-optimizations`
+- `allow-request-ignore-battery-optimizations`
 - `allow-list-distributors`
 - `allow-set-distributor`
 - `allow-set-token`
@@ -252,6 +254,32 @@ Enables the get_pending command without any pre-configured scope.
 <td>
 
 Denies the get_pending command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-is-ignoring-battery-optimizations`
+
+</td>
+<td>
+
+Enables the is_ignoring_battery_optimizations command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-is-ignoring-battery-optimizations`
+
+</td>
+<td>
+
+Denies the is_ignoring_battery_optimizations command without any pre-configured scope.
 
 </td>
 </tr>
@@ -538,6 +566,32 @@ Enables the remove_listener command without any pre-configured scope.
 <td>
 
 Denies the remove_listener command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-request-ignore-battery-optimizations`
+
+</td>
+<td>
+
+Enables the request_ignore_battery_optimizations command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-request-ignore-battery-optimizations`
+
+</td>
+<td>
+
+Denies the request_ignore_battery_optimizations command without any pre-configured scope.
 
 </td>
 </tr>

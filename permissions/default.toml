@@ -37,6 +37,8 @@ permissions = [
   "allow-set-push-message-listener-active",
   "allow-set-encrypted-content-allowed",
   "allow-take-push-diagnostics",
+  "allow-is-ignoring-battery-optimizations",
+  "allow-request-ignore-battery-optimizations",
   "allow-list-distributors",
   "allow-set-distributor",
   "allow-set-token",

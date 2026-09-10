@@ -204,6 +204,28 @@ pub async fn set_encrypted_content_allowed<R: Runtime>(
 }
 
 #[command]
+pub async fn is_ignoring_battery_optimizations<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<bool> {
+    #[cfg(mobile)]
+    return notification.is_ignoring_battery_optimizations().await;
+    #[cfg(desktop)]
+    return notification.is_ignoring_battery_optimizations();
+}
+
+#[command]
+pub async fn request_ignore_battery_optimizations<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<()> {
+    #[cfg(mobile)]
+    return notification.request_ignore_battery_optimizations().await;
+    #[cfg(desktop)]
+    return notification.request_ignore_battery_optimizations();
+}
+
+#[command]
 pub async fn take_push_diagnostics<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,

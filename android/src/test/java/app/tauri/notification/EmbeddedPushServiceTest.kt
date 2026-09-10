@@ -1,8 +1,11 @@
 package app.tauri.notification
 
+import android.app.AlarmManager
+import android.content.Context
 import android.net.ConnectivityManager
 import android.app.NotificationManager
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Base64
 import com.google.crypto.tink.apps.fixed_webpush.WebPushHybridEncrypt
 import io.mockk.every
@@ -76,6 +79,16 @@ class EmbeddedPushServiceTest {
     private fun start() {
         service.onStartCommand(null, 0, 1)
     }
+
+    private fun nextAlarmDelayMs(): Long {
+        val alarms = shadowOf(service.getSystemService(Context.ALARM_SERVICE) as AlarmManager)
+        val alarm = alarms.nextScheduledAlarm
+        assertNotNull(alarm)
+        return alarm.triggerAtTime - SystemClock.elapsedRealtime()
+    }
+
+    private fun scheduledAlarmCount(): Int =
+        shadowOf(service.getSystemService(Context.ALARM_SERVICE) as AlarmManager).scheduledAlarms.size
 
     private fun frame(index: Int, text: String) {
         val (socket, listener) = connections[index]
@@ -201,7 +214,8 @@ class EmbeddedPushServiceTest {
         finishWork()
         val (socket, listener) = connections[0]
         listener.onFailure(socket, IOException("offline"), null)
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+        shadowOf(Looper.getMainLooper()).idle()
+        start()
         frame(1, """{"event":"open","time":300}""")
         finishWork()
         frame(1, message("A"))
@@ -524,7 +538,10 @@ class EmbeddedPushServiceTest {
         val (socket, listener) = connections.single()
         listener.onFailure(socket, IOException("disconnected"), null)
         listener.onClosed(socket, 1000, "closed")
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(1, scheduledAlarmCount())
+        start()
 
         assertEquals(2, connections.size)
         assertEquals(1, PushDiagnostics.drain(service).counts["EMBEDDED_SOCKET_FAILED"])
@@ -537,9 +554,11 @@ class EmbeddedPushServiceTest {
         val (socket, listener) = connections.single()
         listener.onFailure(socket, IOException("disconnected"), null)
         shadowOf(Looper.getMainLooper()).idle()
-        service.onDestroy()
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMinutes(5))
+        assertEquals(1, scheduledAlarmCount())
 
+        service.onDestroy()
+
+        assertEquals(0, scheduledAlarmCount())
         assertEquals(1, connections.size)
     }
 
@@ -550,10 +569,12 @@ class EmbeddedPushServiceTest {
             val (socket, listener) = connections.last()
             listener.onFailure(socket, IOException("offline"), null)
             shadowOf(Looper.getMainLooper()).idle()
+
+            val delay = nextAlarmDelayMs()
+            assertTrue(delay in 1..120_000)
+
             val beforeRetry = connections.size
-            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(999))
-            assertEquals(beforeRetry, connections.size)
-            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(119_001))
+            start()
             assertEquals(beforeRetry + 1, connections.size)
         }
     }

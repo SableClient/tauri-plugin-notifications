@@ -56,6 +56,10 @@
             android:foregroundServiceType="remoteMessaging" />
 
         <receiver
+            android:name="app.tauri.notification.EmbeddedPushAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name="app.tauri.notification.EmbeddedPushBootReceiver"
             android:exported="false">
             <intent-filter>
@@ -70,4 +74,5 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

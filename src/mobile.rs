@@ -321,6 +321,38 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    pub async fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
+        #[cfg(all(target_os = "android", feature = "push-notifications"))]
+        {
+            self.0
+                .run_mobile_plugin_async::<crate::models::BatteryOptimizationResponse>(
+                    "isIgnoringBatteryOptimizations",
+                    (),
+                )
+                .await
+                .map(|r| r.ignoring)
+                .map_err(Into::into)
+        }
+        #[cfg(not(all(target_os = "android", feature = "push-notifications")))]
+        {
+            Ok(true)
+        }
+    }
+
+    pub async fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
+        #[cfg(all(target_os = "android", feature = "push-notifications"))]
+        {
+            self.0
+                .run_mobile_plugin_async::<()>("requestIgnoreBatteryOptimizations", ())
+                .await
+                .map_err(Into::into)
+        }
+        #[cfg(not(all(target_os = "android", feature = "push-notifications")))]
+        {
+            Ok(())
+        }
+    }
+
     pub async fn take_push_diagnostics(&self) -> crate::Result<PushDiagnostics> {
         #[cfg(target_os = "android")]
         {
