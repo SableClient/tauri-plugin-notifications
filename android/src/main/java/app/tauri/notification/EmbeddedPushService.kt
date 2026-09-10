@@ -12,6 +12,7 @@ import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.Looper
 import android.util.Log
 import java.util.concurrent.Executors
@@ -37,10 +38,15 @@ class EmbeddedPushService : Service() {
     private var activeSubscription: Subscription? = null
     private var ready = false
     private val pushExecutor = Executors.newSingleThreadExecutor()
-    private var reconnect: Runnable? = null
     private var currentNetwork: Network? = null
     private var connectivity: ConnectivityManager? = null
     private val inFlight = mutableSetOf<Pair<Subscription, String>>()
+
+    private val wakeLock: PowerManager.WakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG)
+            .apply { setReferenceCounted(false) }
+    }
 
     private data class Subscription(val endpoint: String, val userId: String?, val deviceId: String?)
 
@@ -75,8 +81,7 @@ class EmbeddedPushService : Service() {
     }
 
     private fun cancelReconnect() {
-        reconnect?.let { handler.removeCallbacks(it) }
-        reconnect = null
+        EmbeddedPushAlarm.cancel(this)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -115,8 +120,9 @@ class EmbeddedPushService : Service() {
         if (socket == null) {
             cancelReconnect()
             connect(url)
-        } else if (ready) {
-            endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
+        } else {
+            EmbeddedPushAlarm.schedule(this, HEARTBEAT_MS)
+            if (ready) endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
         }
         return START_STICKY
     }
@@ -126,6 +132,7 @@ class EmbeddedPushService : Service() {
         connectivity?.unregisterNetworkCallback(networkCallback)
         connectivity = null
         cancelReconnect()
+        releaseWakeLock()
         ready = false
         socket?.close(NORMAL_CLOSURE, null)
         socket = null
@@ -136,6 +143,8 @@ class EmbeddedPushService : Service() {
     }
 
     private fun connect(url: String) {
+        if (!wakeLock.isHeld) wakeLock.acquire(CONNECT_WAKELOCK_MS)
+
         val http = client ?: OkHttpClient.Builder()
             // The gateway sends its own keepalives; this catches a half-open socket.
             .pingInterval(PING_SECONDS, TimeUnit.SECONDS)
@@ -147,19 +156,21 @@ class EmbeddedPushService : Service() {
         if (state.activeProvider != "embedded" || state.endpoint != endpoint) return
         val owner = Subscription(state.endpoint ?: return, state.pushUserId, state.pushDeviceId)
         val requestUrl = Request.Builder().url(url).build().url.newBuilder().addQueryParameter("since", "12h").build()
-        socket = http.newWebSocket(Request.Builder().url(requestUrl).build(), Listener(url, owner))
+        socket = http.newWebSocket(Request.Builder().url(requestUrl).build(), Listener(owner))
     }
 
-    private fun scheduleReconnect(url: String) {
+    private fun scheduleReconnect() {
         if (closing) return
         val delay = retryDelay
         retryDelay = (retryDelay * 2).coerceAtMost(MAX_BACKOFF_MS)
         Log.i(TAG, "Reconnecting to the push gateway in ${delay}ms")
         cancelReconnect()
-        reconnect = Runnable {
-            reconnect = null
-            if (!closing && socket == null) connect(url)
-        }.also { handler.postDelayed(it, delay) }
+        releaseWakeLock()
+        EmbeddedPushAlarm.schedule(this, delay)
+    }
+
+    private fun releaseWakeLock() {
+        if (wakeLock.isHeld) wakeLock.release()
     }
 
     private fun owns(owner: Subscription): Boolean {
@@ -224,7 +235,7 @@ class EmbeddedPushService : Service() {
         }
     }
 
-    private inner class Listener(private val url: String, private val owner: Subscription) : WebSocketListener() {
+    private inner class Listener(private val owner: Subscription) : WebSocketListener() {
         private val pending = mutableListOf<Pair<String, JSONObject>>()
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -243,6 +254,8 @@ class EmbeddedPushService : Service() {
                                     return@ready
                                 }
                                 Log.i(TAG, "Push gateway subscription ready")
+                                releaseWakeLock()
+                                EmbeddedPushAlarm.schedule(this@EmbeddedPushService, HEARTBEAT_MS)
                                 PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_READY)
                                 ready = true
                                 retryDelay = BASE_BACKOFF_MS
@@ -278,7 +291,7 @@ class EmbeddedPushService : Service() {
                 PushDiagnostics.record(this@EmbeddedPushService, outcome)
                 socket = null
                 ready = false
-                scheduleReconnect(url)
+                scheduleReconnect()
             }
         }
     }
@@ -333,6 +346,9 @@ class EmbeddedPushService : Service() {
         private const val FOREGROUND_ID = 0x5AB1E
         private const val NORMAL_CLOSURE = 1000
         private const val PING_SECONDS = 30L
+        private const val WAKELOCK_TAG = "SableEmbeddedPush:WakeLock"
+        private const val CONNECT_WAKELOCK_MS = 30_000L
+        private const val HEARTBEAT_MS = 900_000L
         private const val BASE_BACKOFF_MS = 1_000L
         private const val MAX_BACKOFF_MS = 120_000L
 

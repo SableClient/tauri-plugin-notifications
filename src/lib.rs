@@ -331,6 +331,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R, Option<PluginConfig>> {
             commands::set_push_message_listener_active,
             commands::set_encrypted_content_allowed,
             commands::take_push_diagnostics,
+            commands::is_ignoring_battery_optimizations,
+            commands::request_ignore_battery_optimizations,
             commands::remove_active,
             commands::remove_all,
             commands::cancel,
