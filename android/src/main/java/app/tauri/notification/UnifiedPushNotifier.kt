@@ -125,7 +125,7 @@ object UnifiedPushNotifier {
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
+            .setOnlyAlertOnce(silent)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(GROUP_KEY)
             .setContentIntent(

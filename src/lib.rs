@@ -300,6 +300,13 @@ impl<R: Runtime> NotificationsBuilder<R> {
         self.data.silent = true;
         self
     }
+
+    /// Whether replacing a visible notification alerts again. Android only, `true` when unset.
+    #[must_use]
+    pub const fn only_alert_once(mut self, only_alert_once: bool) -> Self {
+        self.data.only_alert_once = Some(only_alert_once);
+        self
+    }
 }
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`], [`tauri::WebviewWindow`], [`tauri::Webview`] and [`tauri::Window`] to access the notification APIs.

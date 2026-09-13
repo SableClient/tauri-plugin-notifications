@@ -253,6 +253,7 @@ pub struct NotificationData {
     pub(crate) auto_cancel: bool,
     #[serde(default)]
     pub(crate) silent: bool,
+    pub(crate) only_alert_once: Option<bool>,
 }
 
 fn default_id() -> i32 {
@@ -284,6 +285,7 @@ impl Default for NotificationData {
             ongoing: false,
             auto_cancel: false,
             silent: false,
+            only_alert_once: None,
         }
     }
 }
@@ -804,6 +806,17 @@ mod tests {
         assert!(data.inbox_lines.is_empty());
         assert!(data.attachments.is_empty());
         assert!(data.extra.is_empty());
+    }
+
+    #[test]
+    fn test_only_alert_once_uses_the_android_key() {
+        let data = NotificationData {
+            only_alert_once: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&data).expect("Failed to serialize notification data");
+        assert!(json.contains("\"onlyAlertOnce\":false"));
+        assert!(NotificationData::default().only_alert_once.is_none());
     }
 
     #[test]
