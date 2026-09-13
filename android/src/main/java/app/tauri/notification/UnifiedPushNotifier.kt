@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
 import java.util.UUID
@@ -21,8 +23,17 @@ object UnifiedPushNotifier {
     // Kept in sync with the channel ids the app creates in UnifiedPushNotifications.ts.
     private const val MESSAGES_CHANNEL_ID = "messages.v2"
     private const val INVITES_CHANNEL_ID = "invites"
+    private const val CALLS_CHANNEL_ID = "calls"
     private const val ACTION_TYPE_ID = "sable-message"
+    private const val CALL_ACTION_TYPE_ID = "sable-call"
     private const val GROUP_KEY = "matrix_messages"
+
+    private const val RTC_NOTIFICATION_TYPE = "m.rtc.notification"
+    private const val RTC_NOTIFICATION_TYPE_UNSTABLE = "org.matrix.msc4075.rtc.notification"
+    private const val ANSWER_ACTION = "sable-call-answer"
+    private const val DECLINE_ACTION = "sable-call-decline"
+    private const val DEFAULT_RING_LIFETIME_MS = 30_000L
+    private const val MAX_RING_LIFETIME_MS = 120_000L
 
     fun showFromPushInBackground(context: Context, rawMessage: String) {
         val app = context.applicationContext
@@ -45,8 +56,15 @@ object UnifiedPushNotifier {
         }
         val generation = UUID.randomUUID().toString()
         val encrypted = notification.optString("type") == "m.room.encrypted"
-        post(context, notification, if (encrypted) "Encrypted message" else null, generation)
-        if (!encrypted) return
+        if (!encrypted) {
+            if (isRing(notification)) {
+                postIncomingCall(context, notification, notification)
+                return
+            }
+            post(context, notification, null, generation)
+            return
+        }
+        post(context, notification, "Encrypted message", generation)
 
         val state = UnifiedPushStateStore(context)
         if (!state.showEncryptedContent) {
@@ -54,13 +72,31 @@ object UnifiedPushNotifier {
             return
         }
         if (userId.isEmpty() || userId != state.pushUserId) return
-        val (body, outcome) = decryptedBody(context, notification)
+        val (clear, outcome) = decryptedEvent(context, notification)
         PushDiagnostics.record(context, outcome)
-        if (body == null || !state.showEncryptedContent) return
+        if (clear == null || !state.showEncryptedContent) return
+        if (isRing(clear)) {
+            manager.cancel(id)
+            postIncomingCall(context, notification, clear)
+            return
+        }
+        val body = clear.optJSONObject("content")
+            ?.optString("body")
+            ?.takeIf { it.isNotEmpty() }
+        if (body == null) {
+            PushDiagnostics.record(context, PushOutcome.EMPTY_BODY)
+            return
+        }
         val stillCurrent = manager.activeNotifications.any {
             it.id == id && it.tag == null && it.notification.extras.getString(GENERATION_KEY) == generation
         }
         if (stillCurrent) post(context, notification, body, generation, silent = true)
+    }
+
+    internal fun isRing(event: JSONObject): Boolean {
+        val type = event.optString("type")
+        if (type != RTC_NOTIFICATION_TYPE && type != RTC_NOTIFICATION_TYPE_UNSTABLE) return false
+        return event.optJSONObject("content")?.optString("notification_type") == "ring"
     }
 
     private const val GENERATION_KEY = "sable.push.generation"
@@ -161,6 +197,67 @@ object UnifiedPushNotifier {
         NotificationManagerCompat.from(context).notify(notifId, builder.build())
     }
 
+    private fun postIncomingCall(context: Context, notification: JSONObject, event: JSONObject) {
+        ensureChannels(context)
+
+        val roomId = notification.optString("room_id")
+        val userId = notification.optString("user_id")
+        val eventId = event.optString("event_id").ifEmpty { notification.optString("event_id") }
+        val caller = notification.optString("sender_display_name")
+            .ifEmpty { notification.optString("room_name") }
+            .ifEmpty { notification.optString("sender") }
+            .ifEmpty { "Unknown caller" }
+
+        val notifId = callNotificationId(userId, roomId)
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE
+        } else {
+            PendingIntent.FLAG_CANCEL_CURRENT
+        }
+        fun pending(action: String) = PendingIntent.getActivity(
+            context,
+            notifId + action.hashCode(),
+            buildPushIntent(context, notifId, roomId, eventId, userId, action, CALL_ACTION_TYPE_ID),
+            flags,
+        )
+
+        val iconId = context.resources
+            .getIdentifier("notification_icon", "drawable", context.packageName)
+            .takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
+        val fullScreen = pending(DEFAULT_PRESS_ACTION)
+
+        val builder = NotificationCompat.Builder(context, CALLS_CHANNEL_ID)
+            .setSmallIcon(iconId)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(
+                    Person.Builder().setName(caller).setImportant(true).build(),
+                    pending(DECLINE_ACTION),
+                    pending(ANSWER_ACTION),
+                )
+            )
+            .setContentIntent(fullScreen)
+            .setFullScreenIntent(fullScreen, true)
+            .setTimeoutAfter(ringLifetimeMs(event))
+
+        NotificationManagerCompat.from(context).notify(notifId, builder.build())
+    }
+
+    /** Clamped: a broken sender clock must not ring forever. */
+    private fun ringLifetimeMs(event: JSONObject): Long {
+        val lifetime = event.optJSONObject("content")?.optLong("lifetime", 0L) ?: 0L
+        if (lifetime <= 0L) return DEFAULT_RING_LIFETIME_MS
+        return lifetime.coerceAtMost(MAX_RING_LIFETIME_MS)
+    }
+
+    /** Distinct from [roomNotificationId]: a call and a conversation coexist. */
+    internal fun callNotificationId(userId: String, roomId: String): Int =
+        roomNotificationId(userId, roomId + '\u0000' + "call")
+
     private fun addReplyAction(
         context: Context,
         builder: NotificationCompat.Builder,
@@ -228,7 +325,8 @@ object UnifiedPushNotifier {
         roomId: String,
         eventId: String,
         userId: String,
-        action: String = DEFAULT_PRESS_ACTION
+        action: String = DEFAULT_PRESS_ACTION,
+        actionTypeId: String = ACTION_TYPE_ID
     ): Intent {
         val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?: Intent(Intent.ACTION_MAIN).setPackage(context.packageName)
@@ -248,7 +346,7 @@ object UnifiedPushNotifier {
         val sourceJson = JSONObject().apply {
             put("id", notifId)
             put("extra", extraJson)
-            put("actionTypeId", ACTION_TYPE_ID)
+            put("actionTypeId", actionTypeId)
         }.toString()
         intent.putExtra(NOTIFICATION_OBJ_INTENT_KEY, sourceJson)
 
@@ -267,10 +365,10 @@ object UnifiedPushNotifier {
         return "Encrypted message"
     }
 
-    private fun decryptedBody(
+    private fun decryptedEvent(
         context: Context,
         notification: JSONObject
-    ): Pair<String?, PushOutcome> {
+    ): Pair<JSONObject?, PushOutcome> {
         val state = UnifiedPushStateStore(context)
         val userId = state.pushUserId ?: return null to PushOutcome.NO_ACCOUNT
         val deviceId = state.pushDeviceId ?: return null to PushOutcome.NO_ACCOUNT
@@ -300,13 +398,17 @@ object UnifiedPushNotifier {
             is PushDecryptResult.Failure -> return null to result.outcome
         }
 
-        val body = try {
-            JSONObject(clear).optJSONObject("content")?.optString("body")?.takeIf { it.isNotEmpty() }
+        val clearEvent = try {
+            JSONObject(clear)
         } catch (_: Exception) {
             null
         }
 
-        return if (body == null) null to PushOutcome.EMPTY_BODY else body to PushOutcome.DECRYPTED
+        return if (clearEvent == null) {
+            null to PushOutcome.EMPTY_BODY
+        } else {
+            clearEvent to PushOutcome.DECRYPTED
+        }
     }
 
     private fun buildBody(sender: String, text: String): String {
@@ -338,6 +440,23 @@ object UnifiedPushNotifier {
             "Room and space invitations",
             NotificationManager.IMPORTANCE_DEFAULT
         )
+        ensureChannel(
+            manager,
+            CALLS_CHANNEL_ID,
+            "Calls",
+            "Incoming calls",
+            NotificationManager.IMPORTANCE_HIGH
+        ) { channel ->
+            channel.setSound(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            channel.enableVibration(true)
+            channel.lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+        }
     }
 
     private fun ensureChannel(
@@ -345,11 +464,15 @@ object UnifiedPushNotifier {
         id: String,
         name: String,
         channelDescription: String,
-        importance: Int
+        importance: Int,
+        configure: (NotificationChannel) -> Unit = {}
     ) {
         if (manager.getNotificationChannel(id) != null) return
         manager.createNotificationChannel(
-            NotificationChannel(id, name, importance).apply { description = channelDescription }
+            NotificationChannel(id, name, importance).apply {
+                description = channelDescription
+                configure(this)
+            }
         )
     }
 }
