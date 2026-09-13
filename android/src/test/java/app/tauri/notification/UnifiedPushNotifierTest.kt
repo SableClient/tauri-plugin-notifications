@@ -69,6 +69,30 @@ class UnifiedPushNotifierTest {
             .toString()
     }
 
+    private fun ringPayload(
+        roomId: String,
+        eventId: String,
+        notificationType: String = "ring",
+        userId: String? = "@alice:example.org"
+    ): String {
+        val notification = JSONObject()
+            .put("room_id", roomId)
+            .put("event_id", eventId)
+            .put("room_name", "Room 1")
+            .put("sender_display_name", "Alice")
+            .put("type", "org.matrix.msc4075.rtc.notification")
+            .put(
+                "content",
+                JSONObject()
+                    .put("notification_type", notificationType)
+                    .put("lifetime", 30000)
+            )
+        return JSONObject()
+            .put("notification", notification)
+            .apply { if (userId != null) put("user_id", userId) }
+            .toString()
+    }
+
     private fun canonicalId(roomId: String, userId: String = "@alice:example.org") =
         UnifiedPushNotifier.roomNotificationId(userId, roomId)
 
@@ -336,6 +360,42 @@ class UnifiedPushNotifierTest {
         // The fallback deliberately does NOT match the warm-path identity.
         assertNull(shadow.getNotification(null, canonicalId("!r3:example.org")))
         assertEquals(1, shadow.allNotifications.size)
+    }
+
+    @Test
+    fun ringIsRecognisedOnBothEventTypesAndOnlyForTheRingKind() {
+        fun event(type: String, kind: String) = JSONObject()
+            .put("type", type)
+            .put("content", JSONObject().put("notification_type", kind))
+
+        assertTrue(UnifiedPushNotifier.isRing(event("m.rtc.notification", "ring")))
+        assertTrue(UnifiedPushNotifier.isRing(event("org.matrix.msc4075.rtc.notification", "ring")))
+        // An announcement of a call already running is not a ring.
+        assertFalse(UnifiedPushNotifier.isRing(event("m.rtc.notification", "notification")))
+        assertFalse(UnifiedPushNotifier.isRing(event("m.room.message", "ring")))
+        assertFalse(UnifiedPushNotifier.isRing(JSONObject().put("type", "m.rtc.notification")))
+    }
+
+    @Test
+    fun callNotificationIdNeverCollidesWithTheRoomsConversation() {
+        assertNotEquals(
+            UnifiedPushNotifier.roomNotificationId("@alice:example.org", "!r1:example.org"),
+            UnifiedPushNotifier.callNotificationId("@alice:example.org", "!r1:example.org")
+        )
+    }
+
+    @Test
+    fun showFromPush_callAnnouncementStaysAnOrdinaryMessage() {
+        UnifiedPushNotifier.showFromPush(
+            context,
+            ringPayload("!r1:example.org", "\$ann", notificationType = "notification")
+        )
+
+        val callId = UnifiedPushNotifier.callNotificationId("@alice:example.org", "!r1:example.org")
+        assertNull(shadowNotificationManager().getNotification(null, callId))
+        assertNotNull(
+            shadowNotificationManager().getNotification(null, canonicalId("!r1:example.org"))
+        )
     }
 
     @Test
