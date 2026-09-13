@@ -116,7 +116,6 @@ class TauriNotificationManager(
   }
 
   private fun trigger(notificationManager: NotificationManagerCompat, notification: Notification): Int {
-    dismissVisibleNotification(notification.id)
     cancelTimerForNotification(notification.id)
     buildNotification(notificationManager, notification)
 
@@ -203,7 +202,7 @@ class TauriNotificationManager(
       }
     }
     mBuilder.setVisibility(notification.visibility ?: NotificationCompat.VISIBILITY_PRIVATE)
-    mBuilder.setOnlyAlertOnce(true)
+    mBuilder.setOnlyAlertOnce(notification.onlyAlertOnce ?: true)
     mBuilder.setSmallIcon(notification.getSmallIcon(context, getDefaultSmallIcon(context)))
     mBuilder.setLargeIcon(notification.getLargeIcon(context))
     val iconColor = notification.getIconColor(config?.iconColor ?: "")
