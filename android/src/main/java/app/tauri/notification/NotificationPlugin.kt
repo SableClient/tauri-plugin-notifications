@@ -24,8 +24,6 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
-import com.google.firebase.FirebaseApp
-import com.google.firebase.messaging.FirebaseMessaging
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.ArrayDeque
 
@@ -634,12 +632,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     getFirebaseToken(registration)
   }
 
-  private fun fcmConfigured(): Boolean =
-    try {
-      FirebaseApp.getApps(activity).isNotEmpty()
-    } catch (_: Exception) {
-      false
-    }
+  private fun fcmConfigured(): Boolean = FcmBridge.isConfigured(activity)
 
   /** Returns false when no gateway is configured, leaving the caller to report why. */
   private fun startEmbeddedPushRegistration(registration: PushRegistration): Boolean {
@@ -734,18 +727,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    try {
-      FirebaseMessaging.getInstance().deleteToken().addOnCompleteListener { task ->
-        if (!task.isSuccessful) {
-          invoke.reject("Failed to delete FCM token: ${task.exception?.message}")
-          return@addOnCompleteListener
-        }
-        fcmToken = null
-        if (unifiedPushState.activeProvider == "fcm") unifiedPushState.activeProvider = null
-        invoke.resolve()
+    FcmBridge.deleteToken { result ->
+      if (result is FcmDeleteResult.Failed) {
+        invoke.reject(result.message)
+        return@deleteToken
       }
-    } catch (error: Exception) {
-      // No default FirebaseApp (embedded-FCM/VAPID, no google-services.json): nothing to delete.
       fcmToken = null
       if (unifiedPushState.activeProvider == "fcm") unifiedPushState.activeProvider = null
       invoke.resolve()
@@ -923,29 +909,28 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    try {
-      FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-        if (pendingPushRegistration !== registration || registration.phase != PushRegistrationPhase.FCM) {
-          return@addOnCompleteListener
-        }
-        if (!task.isSuccessful) {
-          val errorMessage = "Failed to get FCM token: ${task.exception?.message}"
-          val errorData = JSObject()
-          errorData.put("message", errorMessage)
-          trigger("push-error", errorData)
-          finishPushRegistrationError(errorMessage)
-          return@addOnCompleteListener
-        }
-
-        val token = task.result
-        fcmToken = token
+    FcmBridge.fetchToken { outcome ->
+      if (outcome is FcmTokenResult.Unavailable) {
+        finishPushRegistrationError(outcome.message)
+        return@fetchToken
+      }
+      if (pendingPushRegistration !== registration || registration.phase != PushRegistrationPhase.FCM) {
+        return@fetchToken
+      }
+      if (outcome is FcmTokenResult.Failed) {
+        val errorData = JSObject()
+        errorData.put("message", outcome.message)
+        trigger("push-error", errorData)
+        finishPushRegistrationError(outcome.message)
+        return@fetchToken
+      }
+      if (outcome is FcmTokenResult.Success) {
+        fcmToken = outcome.token
         unifiedPushState.activeProvider = "fcm"
         val result = JSObject()
-        result.put("deviceToken", token)
+        result.put("deviceToken", outcome.token)
         finishPushRegistrationSuccess(result)
       }
-    } catch (error: Exception) {
-      finishPushRegistrationError(error.message ?: "Failed to get FCM token")
     }
   }
 
