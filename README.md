@@ -621,6 +621,20 @@ Listens for notification action performed events.
 
 ### Android Setup
 
+The plugin ships `gms` and `foss` flavours, so every consuming app must pick one
+in `gen/android/app/build.gradle.kts`:
+
+```kotlin
+android {
+    defaultConfig {
+        missingDimensionStrategy("push", "gms") // or "foss"
+    }
+}
+```
+
+`foss` drops Firebase Cloud Messaging and the embedded FCM distributor, for
+builds shipped through F-Droid or IzzyOnDroid; push then uses UnifiedPush only.
+
 1. The plugin automatically includes required permissions
 2. For custom sounds:
    - Place sound files in `res/raw/` folder
