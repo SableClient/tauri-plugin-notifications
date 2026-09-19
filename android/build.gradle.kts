@@ -31,6 +31,14 @@ android {
         buildConfigField("boolean", "ENABLE_PUSH_NOTIFICATIONS", "$enablePush")
     }
 
+    // FCM pulls proprietary Google libraries that FOSS repos reject. The foss
+    // flavour drops them, leaving UnifiedPush as the only transport.
+    flavorDimensions += "push"
+    productFlavors {
+        create("gms")
+        create("foss")
+    }
+
     buildTypes {
         debug {
             enableUnitTestCoverage = true
@@ -78,8 +86,8 @@ dependencies {
     implementation("com.google.android.material:material:1.14.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
-    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
-    implementation("com.google.firebase:firebase-messaging-ktx:24.1.2")
+    "gmsImplementation"(platform("com.google.firebase:firebase-bom:34.16.0"))
+    "gmsImplementation"("com.google.firebase:firebase-messaging-ktx:24.1.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("org.unifiedpush.android:connector:3.3.3")
     // The connector declares Tink as a runtime-only dependency, so its WebPush
@@ -89,7 +97,7 @@ dependencies {
     // classpath — `tink-android` repackages the same classes and trips AGP's
     // duplicate-class check.
     implementation("com.google.crypto.tink:tink:1.21.0")
-    implementation("org.unifiedpush.android:embedded-fcm-distributor:3.0.0")
+    "gmsImplementation"("org.unifiedpush.android:embedded-fcm-distributor:3.0.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk-android:1.14.11")
     testImplementation("io.mockk:mockk-agent:1.14.11")

@@ -22,15 +22,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- Firebase Cloud Messaging Service for handling push notifications -->
-        <service
-            android:name="app.tauri.notification.TauriFirebaseMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
-
         <!-- UnifiedPush connector push service. The connector library's
              internal MessagingReceiverImpl receives distributor broadcasts
              and forwards them to this service, so no BroadcastReceiver is
