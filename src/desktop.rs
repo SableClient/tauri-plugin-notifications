@@ -402,11 +402,11 @@ impl<R: Runtime> Notifications<R> {
     }
 
     #[allow(clippy::unused_self)]
-    pub fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
+    pub const fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
         Ok(true)
     }
 
-    pub fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
+    pub const fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
         Ok(())
     }
 

@@ -202,6 +202,8 @@ class UnifiedPushNotifierTest {
             val posted = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org"))!!
             assertTrue(posted.extras.getString(Notification.EXTRA_TEXT)!!.contains("decrypted"))
             assertEquals("Room 1", posted.extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))
+            // The repost must not alert again.
+            assertTrue(posted.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
         } finally {
             unmockkObject(PushPayloadDecryptor)
         }
@@ -318,7 +320,8 @@ class UnifiedPushNotifierTest {
         // A tagged lookup for the same id must find nothing: warm
         // enrichment/clear uses the untagged key (null, id).
         assertNull(shadowNotificationManager().getNotification("!r1:example.org", id))
-        assertTrue(posted!!.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        // A first cold push must alert; only the silent repost sets ONLY_ALERT_ONCE.
+        assertTrue(posted!!.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
         assertTrue(posted.flags and Notification.FLAG_AUTO_CANCEL != 0)
     }
 

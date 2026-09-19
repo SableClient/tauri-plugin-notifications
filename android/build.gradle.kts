@@ -31,8 +31,7 @@ android {
         buildConfigField("boolean", "ENABLE_PUSH_NOTIFICATIONS", "$enablePush")
     }
 
-    // FCM pulls proprietary Google libraries that FOSS repos reject. The foss
-    // flavour drops them, leaving UnifiedPush as the only transport.
+    // FCM pulls proprietary Google libraries that FOSS repos reject.
     flavorDimensions += "push"
     productFlavors {
         create("gms")
@@ -109,8 +108,9 @@ dependencies {
     implementation(project(":tauri-android"))
 }
 
+// gms only: aggregating both flavours gives Jacoco two FcmBridge classes at one FQN.
 tasks.register<JacocoReport>("jacocoTestReport") {
-    dependsOn("testDebugUnitTest")
+    dependsOn("testGmsDebugUnitTest")
 
     reports {
         xml.required.set(true)
@@ -127,7 +127,7 @@ tasks.register<JacocoReport>("jacocoTestReport") {
         "android/**/*.*"
     )
 
-    val debugTree = fileTree("${layout.buildDirectory.get().asFile}/tmp/kotlin-classes/debug") {
+    val debugTree = fileTree("${layout.buildDirectory.get().asFile}/tmp/kotlin-classes/gmsDebug") {
         exclude(fileFilter)
     }
 
@@ -135,10 +135,11 @@ tasks.register<JacocoReport>("jacocoTestReport") {
 
     sourceDirectories.setFrom(files(listOf(
         "$mainSrc/main/java",
-        "$mainSrc/main/kotlin"
+        "$mainSrc/main/kotlin",
+        "$mainSrc/gms/java"
     )))
     classDirectories.setFrom(files(debugTree))
     executionData.setFrom(fileTree(layout.buildDirectory.get().asFile) {
-        include("outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
+        include("outputs/unit_test_code_coverage/gmsDebugUnitTest/testGmsDebugUnitTest.exec")
     })
 }

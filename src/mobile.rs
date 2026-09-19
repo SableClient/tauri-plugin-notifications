@@ -1,3 +1,6 @@
+// Async on every target for a uniform API; some platform branches never await.
+#![allow(clippy::unused_async)]
+
 use serde::de::DeserializeOwned;
 use tauri::{
     AppHandle, Runtime,
