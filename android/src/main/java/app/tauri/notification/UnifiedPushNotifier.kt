@@ -188,23 +188,23 @@ object UnifiedPushNotifier {
             PendingIntent.FLAG_CANCEL_CURRENT
         }
 
+        val state = UnifiedPushStateStore(context)
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(iconId)
             .addExtras(Bundle().apply { putString(GENERATION_KEY, generation) })
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(silent)
+            .setOnlyAlertOnce(silent || state.notifyOnce)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(GROUP_KEY)
 
-        if (silent || !UnifiedPushStateStore(context).notificationSounds) builder.setSilent(true)
+        if (silent || !state.notificationSounds) builder.setSilent(true)
 
         // Same style as the warm path, so JS enrichment updates it in place.
         if (isInvite) {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
         } else {
-            val state = UnifiedPushStateStore(context)
             // The OS owns the history: swiping away an alert also discards its previews.
             val messages = ConversationHistory.read(context, notifId).toMutableList()
             val index = messages.indexOfFirst { eventId.isNotEmpty() && it.extras.getString(EVENT_KEY) == eventId }

@@ -8,4 +8,5 @@ class PushPolicyArgs {
     var content: Boolean = false
     var encryptedContent: Boolean = false
     var sounds: Boolean = true
+    var notifyOnce: Boolean = true
 }

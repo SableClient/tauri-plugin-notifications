@@ -506,8 +506,8 @@ class UnifiedPushNotifierTest {
         // A tagged lookup for the same id must find nothing: warm
         // enrichment/clear uses the untagged key (null, id).
         assertNull(shadowNotificationManager().getNotification("!r1:example.org", id))
-        // A first cold push must alert; only the silent repost sets ONLY_ALERT_ONCE.
-        assertTrue(posted!!.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
+        // A first cold push still alerts with the flag on: it only silences a repost.
+        assertTrue(posted!!.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
         assertTrue(posted.flags and Notification.FLAG_AUTO_CANCEL != 0)
     }
 
@@ -655,4 +655,17 @@ class UnifiedPushNotifierTest {
         assertTrue("must default to closed", !UnifiedPushStateStore(context).showEncryptedContent)
     }
 
+    @Test
+    fun showFromPush_onlyNotifiesOnceForARoomUntilTheAlertIsDismissed() {
+        val room = "!once:example.org"
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "${'$'}one", "first"))
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "${'$'}two", "second"))
+        val quiet = notificationManager.activeNotifications.single().notification
+        assertTrue(quiet.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+
+        UnifiedPushStateStore(context).notifyOnce = false
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "${'$'}three", "third"))
+        val loud = notificationManager.activeNotifications.single().notification
+        assertTrue(loud.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
+    }
 }

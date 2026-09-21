@@ -184,6 +184,10 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var notificationSounds: Boolean
     get() = prefs.getBoolean("up-sounds", true)
     set(value) { prefs.edit().putBoolean("up-sounds", value).apply() }
+  /** Mirrors the app's "only notify once" setting. */
+  var notifyOnce: Boolean
+    get() = prefs.getBoolean("up-notify-once", true)
+    set(value) { prefs.edit().putBoolean("up-notify-once", value).apply() }
 
   var showEncryptedContent: Boolean
     get() = prefs.getBoolean("up-show-encrypted", false)

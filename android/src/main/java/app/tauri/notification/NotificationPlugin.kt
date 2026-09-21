@@ -1151,6 +1151,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.showContent = args.content
     unifiedPushState.showEncryptedContent = args.encryptedContent
     unifiedPushState.notificationSounds = args.sounds
+    unifiedPushState.notifyOnce = args.notifyOnce
     if (!args.enabled || !args.content) {
       androidx.work.WorkManager.getInstance(activity).cancelAllWorkByTag("push-render")
       PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
