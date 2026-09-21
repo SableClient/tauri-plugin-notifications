@@ -34,7 +34,7 @@ class TauriFirebaseMessagingService : FirebaseMessagingService() {
 
     if (message.data.isNotEmpty() && UnifiedPushStateStore(this).activeProvider == "fcm") {
       val dataJson = JSONObject(message.data as Map<String, Any>)
-      UnifiedPushNotifier.showFromPush(this, dataJson.toString())
+      PushRenderWorker.enqueue(this, dataJson.toString())
     }
 
     NotificationPlugin.instance?.triggerPushMessage(pushData)

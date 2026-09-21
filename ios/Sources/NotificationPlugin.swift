@@ -102,15 +102,32 @@ func showNotification(invoke: Invoke, notification: Notification)
 
   // Schedule the request.
   let request = UNNotificationRequest(
-    identifier: "\(notification.id)", content: content, trigger: trigger
+    identifier: notificationRequestIdentifier(notification), content: content, trigger: trigger
   )
 
   let center = UNUserNotificationCenter.current()
-  center.add(request) { (error: Error?) in
-    if let theError = error {
-      invoke.reject(theError.localizedDescription)
+  func add() {
+    center.add(request) { (error: Error?) in
+      if let theError = error { invoke.reject(theError.localizedDescription) }
     }
   }
+  if trigger == nil && notification.extra?["event_id"] != nil {
+    center.getDeliveredNotifications { delivered in
+      let matcher = NotificationHandler()
+      let matching = delivered.filter {
+        matcher.matchesMessage($0.request.content.userInfo, content.userInfo)
+      }
+      guard !matching.isEmpty else { add(); return }
+      guard !matching.contains(where: { $0.request.content.body == content.body }) else { return }
+      // Enrichment changes content, not the event: replace it without a second sound.
+      guard let updated = content.mutableCopy() as? UNMutableNotificationContent else { return }
+      updated.sound = nil
+      center.removeDeliveredNotifications(withIdentifiers: matching.map { $0.request.identifier })
+      center.add(UNNotificationRequest(identifier: request.identifier, content: updated, trigger: nil)) { error in
+        if let error { invoke.reject(error.localizedDescription) }
+      }
+    }
+  } else { add() }
 
   return request
 }
@@ -172,6 +189,7 @@ class NotificationPlugin: Plugin {
   #if ENABLE_PUSH_NOTIFICATIONS
     // Completion handler for push token registration
     private var pushTokenCompletions = [(Result<String, Error>) -> Void]()
+    var isRegisteringPush: Bool { !pushTokenCompletions.isEmpty }
     private let pushTokenTimeout: TimeInterval = 10.0
     private var pushTokenTimer: Timer?
   #endif
@@ -204,7 +222,7 @@ class NotificationPlugin: Plugin {
 
     let request = try showNotification(invoke: invoke, notification: notification)
     notificationHandler.saveNotification(request.identifier, notification)
-    invoke.resolve(Int(request.identifier) ?? -1)
+    invoke.resolve(notification.id)
   }
 
   @objc public func batch(_ invoke: Invoke) throws {
@@ -214,7 +232,7 @@ class NotificationPlugin: Plugin {
     for notification in args.notifications {
       let request = try showNotification(invoke: invoke, notification: notification)
       notificationHandler.saveNotification(request.identifier, notification)
-      ids.append(Int(request.identifier) ?? -1)
+      ids.append(notification.id)
     }
 
     invoke.resolve(ids)
@@ -395,8 +413,15 @@ class NotificationPlugin: Plugin {
   @objc func removeActive(_ invoke: Invoke) {
     let args = try? invoke.parseArgs(RemoveActiveArgs.self)
     if let args, !args.notifications.isEmpty {
-      UNUserNotificationCenter.current().removeDeliveredNotifications(
-        withIdentifiers: args.notifications.map { String($0.id) })
+      let ids = Set(args.notifications.map { $0.id })
+      UNUserNotificationCenter.current().getDeliveredNotifications { notifications in
+        let identifiers = notifications.filter {
+          self.notificationHandler.matches($0.request, ids: ids)
+        }.map { $0.request.identifier }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: identifiers)
+        invoke.resolve()
+      }
+      return
     } else {
       UNUserNotificationCenter.current().removeAllDeliveredNotifications()
       DispatchQueue.main.async(execute: {

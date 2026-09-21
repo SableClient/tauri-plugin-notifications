@@ -29,6 +29,7 @@ class UnifiedPushNotifierTest {
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
+        UnifiedPushStateStore(context).showContent = true
         notificationManager = context.getSystemService(NotificationManager::class.java)
 
         // UnifiedPushNotifier builds its tap intent via
@@ -49,6 +50,191 @@ class UnifiedPushNotifierTest {
     }
 
     private fun shadowNotificationManager() = shadowOf(notificationManager)
+
+    @Test
+    fun successiveMessagesKeepHistoryAndDismissalClearsIt() {
+        val room = "!history:example.org"
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$one", "first"))
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$two", "second"))
+        fun texts(): List<String> = androidx.core.app.NotificationCompat.MessagingStyle
+            .extractMessagingStyleFromNotification(notificationManager.activeNotifications.single().notification)!!
+            .messages.map { it.text.toString() }
+        assertEquals(listOf("first", "second"), texts())
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$two", "second"))
+        assertEquals(listOf("first", "second"), texts())
+        notificationManager.cancelAll()
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$three", "third"))
+        assertEquals(listOf("third"), texts())
+    }
+
+    @Test
+    fun warmAndColdDeliveriesShareHistoryAndDoNotReAlertTheSameEvent() {
+        val room = "!mixed:example.org"
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$first", "first"))
+        val native = TauriNotificationManager(NotificationStorage(context, com.fasterxml.jackson.databind.ObjectMapper()),
+            null, context, null)
+        val request = app.tauri.notification.Notification().apply {
+            id = UnifiedPushNotifier.roomNotificationId("@alice:example.org", room)
+            title = "Room"
+            channelId = "messages.v2"
+            messages = listOf(NotificationMessage().apply {
+                eventId = "\$second"
+                body = "second"
+                senderName = "Alice"
+                timestamp = System.currentTimeMillis()
+            })
+        }
+        native.schedule(request)
+        val before = notificationManager.activeNotifications.single().notification.`when`
+        native.schedule(request)
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$second", "second"))
+        val posted = notificationManager.activeNotifications.single().notification
+        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)!!
+        assertEquals(listOf("first", "second"), style.messages.map { it.text.toString() })
+        assertEquals(before, posted.`when`)
+        assertNull(posted.sound)
+        assertNull(posted.vibrate)
+    }
+
+    @Test
+    fun historyIsBoundedAndHiddenPreviewsDoNotLeakEarlierMessages() {
+        val room = "!history:example.org"
+        for (i in 1..12) UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$event$i", "body$i"))
+        fun messages() = androidx.core.app.NotificationCompat.MessagingStyle
+            .extractMessagingStyleFromNotification(notificationManager.activeNotifications.single().notification)!!.messages
+        assertEquals((5..12).map { "body$it" }, messages().map { it.text.toString() })
+        UnifiedPushStateStore(context).showContent = false
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$event12", "body12"))
+        assertTrue(messages().all { it.text.toString() == "New message" })
+    }
+
+    @Test
+    fun dismissedEventDoesNotReturnFromEitherDeliveryPath() {
+        val room = "!replay:example.org"
+        val payload = pushPayload(room, "\$seen", "already seen")
+        UnifiedPushNotifier.showFromPush(context, payload)
+        notificationManager.cancelAll()
+        UnifiedPushNotifier.showFromPush(context, payload)
+        assertTrue(notificationManager.activeNotifications.isEmpty())
+        val native = TauriNotificationManager(NotificationStorage(context, com.fasterxml.jackson.databind.ObjectMapper()), null, context, null)
+        native.schedule(app.tauri.notification.Notification().apply {
+            id = UnifiedPushNotifier.roomNotificationId("@alice:example.org", room)
+            title = "Room"
+            messages = listOf(NotificationMessage().apply {
+                eventId = "\$seen"; body = "already seen"; timestamp = System.currentTimeMillis()
+            })
+        })
+        assertTrue(notificationManager.activeNotifications.isEmpty())
+    }
+
+    @Test
+    fun eventEvictedFromPreviewHistoryDoesNotReturnAsNew() {
+        val room = "!replay:example.org"
+        for (i in 1..12) UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$event$i", "body$i"))
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$event1", "body1"))
+        val messages = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(
+            notificationManager.activeNotifications.single().notification)!!.messages
+        assertEquals((5..12).map { "body$it" }, messages.map { it.text.toString() })
+    }
+
+    @Test
+    fun decryptionFinishingOutOfOrderUpdatesItsOwnMessage() {
+        val room = "!history:example.org"
+        NotificationStorage(context, com.fasterxml.jackson.databind.ObjectMapper()).writeActionGroup(listOf(ActionType().apply {
+            id = "sable-message"
+            actions = listOf("sable-reply", "sable-mark-read").map { name -> NotificationAction().apply {
+                id = name; title = name; input = name == "sable-reply"
+            } }
+        }))
+        val state = UnifiedPushStateStore(context)
+        state.pushUserId = "@alice:example.org"
+        state.pushDeviceId = "DEVICE"
+        state.showEncryptedContent = true
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) } answers {
+                UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$second", "second"))
+                PushDecryptResult.Success("""{"content":{"body":"first"}}""")
+            }
+            val payload = JSONObject(pushPayload(room, "\$first"))
+            payload.getJSONObject("notification").put("type", "m.room.encrypted")
+            UnifiedPushNotifier.showFromPush(context, payload.toString())
+            val messages = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(
+                notificationManager.activeNotifications.single().notification)!!.messages
+            assertEquals(listOf("first", "second"), messages.map { it.text.toString() })
+            val intent = shadowOf(notificationManager.activeNotifications.single().notification.contentIntent).savedIntent
+            val target = JSONObject(intent.getStringExtra(NOTIFICATION_OBJ_INTENT_KEY)!!).getJSONObject("extra")
+            assertEquals("\$second", target.getString("event_id"))
+            val actions = notificationManager.activeNotifications.single().notification.actions
+            assertEquals(2, actions.size)
+            for (action in actions) {
+                val actionIntent = shadowOf(action.actionIntent).savedIntent
+                val extra = JSONObject(actionIntent.getStringExtra(NOTIFICATION_OBJ_INTENT_KEY)!!).getJSONObject("extra")
+                assertEquals("\$second", extra.getString("event_id"))
+            }
+        } finally { unmockkObject(PushPayloadDecryptor) }
+    }
+
+    @Test
+    fun readClearIsAppliedBeforeNewMessagesAreQueued() {
+        val user = "@alice:example.org"
+        val room = "!room:example.org"
+        val id = UnifiedPushNotifier.roomNotificationId(user, room)
+        val previous = PushNotificationGate.revision(context, id)
+        PushRenderWorker.enqueue(context, JSONObject().put("notification", JSONObject()
+            .put("user_id", user).put("room_id", room)
+            .put("counts", JSONObject().put("unread", 0))).toString())
+        val next = PushNotificationGate.revision(context, id)
+        assertNotEquals(previous, next)
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$new", userId = user), next)
+        assertEquals(1, notificationManager.activeNotifications.size)
+    }
+
+    @Test
+    fun dismissedQueuedPushCannotPostButNewPushCan() {
+        val user = "@alice:example.org"
+        val room = "!room:example.org"
+        val id = UnifiedPushNotifier.roomNotificationId(user, room)
+        val revision = PushNotificationGate.revision(context, id)
+        val payload = pushPayload(room, "\$event", userId = user)
+        PushNotificationGate.dismiss(context, id) { notificationManager.cancel(id) }
+        UnifiedPushNotifier.showFromPush(context, payload, revision)
+        assertTrue(notificationManager.activeNotifications.isEmpty())
+        UnifiedPushNotifier.showFromPush(context, payload, PushNotificationGate.revision(context, id))
+        assertEquals(1, notificationManager.activeNotifications.size)
+    }
+
+    @Test
+    fun globalDismissalInvalidatesAllQueuedRoomsButRoomDismissalIsScoped() {
+        val first = PushNotificationGate.revision(context, 1)
+        val second = PushNotificationGate.revision(context, 2)
+        PushNotificationGate.dismiss(context, 1) {}
+        var posted = false
+        PushNotificationGate.post(context, 2, second) { posted = true }
+        assertTrue(posted)
+        PushNotificationGate.dismiss(context, null) {}
+        PushNotificationGate.post(context, 1, first) { fail("Dismissed room posted") }
+        PushNotificationGate.post(context, 2, second) { fail("Cleared room posted") }
+    }
+
+    @Test
+    fun recordsWhyARecipientBoundPushWasDropped() {
+        UnifiedPushStateStore(context).pushUserId = "@alice:example.org"
+        for ((recipient, outcome) in listOf(null to PushOutcome.MISSING_RECIPIENT, "@other:example.org" to PushOutcome.WRONG_RECIPIENT)) {
+            UnifiedPushNotifier.showFromPush(context, pushPayload("!room:example.org", "\$event", userId = recipient))
+            assertEquals(outcome.name, PushDiagnostics.drain(context).lastOutcome)
+            assertTrue(notificationManager.activeNotifications.isEmpty())
+        }
+    }
+
+    @Test
+    fun hiddenPlaintextNeverReachesTheNotification() {
+        context.getSharedPreferences("tauri-notifications", Context.MODE_PRIVATE)
+            .edit().putBoolean("up-show-content", false).commit()
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!private:example.org", "$" + "private", "secret text"))
+        val shown = notificationManager.activeNotifications.single().notification
+        assertFalse(shown.extras.toString().contains("secret text"))
+    }
 
     private fun pushPayload(
         roomId: String,
@@ -116,7 +302,7 @@ class UnifiedPushNotifierTest {
             for (recipient in listOf("notification", "envelope", "device", "default_payload")) {
                 val notification = JSONObject()
                     .put("room_id", "!contract:example.org")
-                    .put("event_id", "\$contract")
+                    .put("event_id", "\$contract-$wrapper-$recipient")
                     .put("type", "m.room.message")
                     .put("content", JSONObject().put("body", "contract message"))
                 val envelope = when (wrapper) {
@@ -273,7 +459,7 @@ class UnifiedPushNotifierTest {
                         pushPayload("!enc:example.org", "\$new", "newer message"))
                     PushDecryptResult.Success("""{"content":{"body":"stale plaintext"}}""")
                 }
-                val payload = JSONObject(pushPayload("!enc:example.org", "\$old"))
+                val payload = JSONObject(pushPayload("!enc:example.org", "\$old-$supersede"))
                 payload.getJSONObject("notification").put("type", "m.room.encrypted")
                 UnifiedPushNotifier.showFromPush(context, payload.toString())
                 val posted = shadowNotificationManager().getNotification(null, canonicalId("!enc:example.org"))

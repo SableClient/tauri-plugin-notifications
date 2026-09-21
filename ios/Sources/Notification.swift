@@ -24,6 +24,17 @@ enum NotificationError: LocalizedError {
   }
 }
 
+func notificationRequestIdentifier(_ notification: Notification) -> String {
+  guard notification.schedule == nil,
+        let user = notification.extra?["user_id"], !user.isEmpty,
+        let room = notification.extra?["room_id"], !room.isEmpty,
+        let event = notification.extra?["event_id"], !event.isEmpty,
+        let data = try? JSONSerialization.data(withJSONObject: [user, room, event]) else {
+    return String(notification.id)
+  }
+  return "message:" + data.base64EncodedString()
+}
+
 func makeNotificationContent(_ notification: Notification) throws -> UNNotificationContent {
   let content = UNMutableNotificationContent()
   content.title = NSString.localizedUserNotificationString(
@@ -51,7 +62,10 @@ func makeNotificationContent(_ notification: Notification) throws -> UNNotificat
     content.categoryIdentifier = actionTypeId
   }
 
-  if let threadIdentifier = notification.group {
+  if let user = notification.extra?["user_id"], !user.isEmpty,
+     let room = notification.extra?["room_id"], !room.isEmpty {
+    content.threadIdentifier = user + "\u{0}" + room
+  } else if let threadIdentifier = notification.group {
     content.threadIdentifier = threadIdentifier
   }
 

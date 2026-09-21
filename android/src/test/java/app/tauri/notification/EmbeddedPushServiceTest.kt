@@ -48,8 +48,11 @@ class EmbeddedPushServiceTest {
 
     @Before
     fun setup() {
+        mockkObject(PushRenderWorker.Companion)
+        every { PushRenderWorker.enqueue(any(), any()) } returns Unit
         service = Robolectric.buildService(EmbeddedPushService::class.java).create().get()
         state = UnifiedPushStateStore(service)
+        state.showContent = true
         state.activeProvider = "embedded"
         state.endpoint = endpoint
         state.prepareEmbeddedReplay(endpoint, true)
@@ -74,6 +77,7 @@ class EmbeddedPushServiceTest {
     fun teardown() {
         service.onDestroy()
         NotificationPlugin.instance = null
+        unmockkObject(PushRenderWorker.Companion)
     }
 
     private fun start() {
@@ -130,6 +134,7 @@ class EmbeddedPushServiceTest {
 
         finishWork()
         verify(exactly = 1) { plugin.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) }
+        verify(exactly = 1) { PushRenderWorker.enqueue(service, body) }
         val counts = PushDiagnostics.drain(service).counts
         assertEquals(1, counts["EMBEDDED_MESSAGE_RECEIVED"])
         assertEquals(1, counts["EMBEDDED_DECRYPTED"])
@@ -289,13 +294,26 @@ class EmbeddedPushServiceTest {
     }
 
     @Test
-    fun activationWithoutListenerRemainsRetryable() {
+    fun activationIsDurablyQueuedWithoutAListener() {
         every { plugin.onUnifiedPushMessage(any(), any()) } returns false
         start()
         frame(0, """{"event":"open","time":100}""")
         frame(0, message("A"))
-        assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+        assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
         every { plugin.onUnifiedPushMessage(any(), any()) } returns true
+        frame(0, message("A"))
+        assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+        verify(exactly = 1) { PushRenderWorker.enqueue(service, any()) }
+    }
+
+    @Test
+    fun activationRemainsRetryableWhenWorkCannotBeQueued() {
+        every { PushRenderWorker.enqueue(any(), any()) } throws IllegalStateException("queue unavailable")
+        start()
+        frame(0, """{"event":"open","time":100}""")
+        frame(0, message("A"))
+        assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+        every { PushRenderWorker.enqueue(any(), any()) } returns Unit
         frame(0, message("A"))
         assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
     }

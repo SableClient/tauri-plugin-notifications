@@ -209,6 +209,10 @@ mod iso8601 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationMessage {
+    #[serde(default)]
+    pub(crate) event_id: Option<String>,
+    #[serde(default)]
+    pub(crate) encrypted: bool,
     pub(crate) body: String,
     #[serde(default)]
     pub(crate) timestamp: i64,

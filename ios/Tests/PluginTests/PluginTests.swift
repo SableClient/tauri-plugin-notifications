@@ -4,6 +4,47 @@ import UserNotifications
 
 final class NotificationTests: XCTestCase {
 
+    func testMessagesKeepDistinctRequestsInTheSameConversation() throws {
+        func message(_ event: String, user: String = "@alice:example.org") throws -> Notification {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "id": 42, "title": "Room", "body": event,
+                "extra": ["user_id": user, "room_id": "!room:example.org", "event_id": event]
+            ])
+            return try JSONDecoder().decode(Notification.self, from: data)
+        }
+        let first = try message("$first")
+        let second = try message("$second")
+        XCTAssertNotEqual(notificationRequestIdentifier(first), notificationRequestIdentifier(second))
+        XCTAssertEqual(notificationRequestIdentifier(first), notificationRequestIdentifier(try message("$first")))
+        XCTAssertEqual(try makeNotificationContent(first).threadIdentifier,
+                       try makeNotificationContent(second).threadIdentifier)
+        XCTAssertNotEqual(notificationRequestIdentifier(first), notificationRequestIdentifier(try message("$first", user: "@bob:example.org")))
+        let content = try makeNotificationContent(second)
+        let handler = NotificationHandler()
+        let id = handler.roomNotificationId(content.userInfo)!
+        XCTAssertTrue(handler.matches(UNNotificationRequest(identifier: notificationRequestIdentifier(second), content: content, trigger: nil), ids: [id]))
+        let remote: [AnyHashable: Any] = ["user_id": "@alice:example.org", "notification": ["room_id": "!room:example.org", "event_id": "$second"]]
+        XCTAssertTrue(handler.matchesMessage(remote, content.userInfo))
+        XCTAssertFalse(handler.matchesMessage(remote, try makeNotificationContent(first).userInfo))
+    }
+
+    func testRemoteDismissalMatchesRecipientAndRoomInsteadOfApnsIdentifier() {
+        let handler = NotificationHandler()
+        let content = UNMutableNotificationContent()
+        content.userInfo = ["user_id": "@alice:example.org", "notification": ["room_id": "!room:example.org"]]
+        let id = handler.roomNotificationId(content.userInfo)!
+        let request = UNNotificationRequest(identifier: "server-apns-id", content: content, trigger: nil)
+        XCTAssertTrue(handler.matches(request, ids: [id]))
+        XCTAssertFalse(handler.matches(request, ids: [id + 1]))
+        content.userInfo = ["user_id": "@bob:example.org", "notification": ["room_id": "!room:example.org"]]
+        let other = UNNotificationRequest(identifier: "another-apns-id", content: content, trigger: nil)
+        XCTAssertFalse(handler.matches(other, ids: [id]))
+        let local = UNNotificationRequest(identifier: String(id), content: content, trigger: nil)
+        XCTAssertTrue(handler.matches(local, ids: [id]))
+        content.userInfo = ["user_id": "@alice:example.org", "notification": ["user_id": "@bob:example.org", "room_id": "!room:example.org"]]
+        XCTAssertNil(handler.roomNotificationId(content.userInfo))
+    }
+
     func testPluginConfigDecodesLaunchTimeActionTypes() throws {
         let json = """
         {"actionTypes":[{"id":"sable-message","actions":[{"id":"sable-reply","title":"Reply","input":true,"inputButtonTitle":"Send","inputPlaceholder":"Type a reply"}]}]}

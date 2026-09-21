@@ -101,7 +101,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     let content = request.content
 
     return ReceivedNotificationData(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: content.title,
       body: content.body,
       extra: notificationExtra(content.userInfo)
@@ -149,7 +149,8 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     }
 
     // Handle notificationClicked for both local and push notifications
-    let id = Int(originalNotificationRequest.identifier) ?? -1
+    let id = Int(originalNotificationRequest.identifier)
+      ?? roomNotificationId(originalNotificationRequest.content.userInfo) ?? -1
     let clickedData = NotificationClickedData(
       id: id,
       data: notificationExtra(originalNotificationRequest.content.userInfo)
@@ -174,7 +175,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       return nil
     }
     return ActiveNotification(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
       sound: notificationRequest.sound ?? "",
@@ -186,7 +187,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
 
   func toRemoteActionNotification(_ request: UNNotificationRequest) -> ActiveNotification {
     ActiveNotification(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
       sound: "",
@@ -235,6 +236,27 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     return extra.isEmpty ? nil : extra
   }
 
+  func roomNotificationId(_ userInfo: [AnyHashable: Any]) -> Int? {
+    guard let extra = notificationExtra(userInfo),
+          let user = extra["user_id"], !user.isEmpty,
+          let room = extra["room_id"], !room.isEmpty else { return nil }
+    let hash = (user + "\u{0}" + room).utf16.reduce(Int32(0)) { ($0 &* 31) &+ Int32($1) }
+    return hash == Int32.min ? 0 : Int(hash.magnitude)
+  }
+
+  func matchesMessage(_ first: [AnyHashable: Any], _ second: [AnyHashable: Any]) -> Bool {
+    guard let first = notificationExtra(first), let second = notificationExtra(second) else { return false }
+    return ["user_id", "room_id", "event_id"].allSatisfy { key in
+      guard let value = first[key], !value.isEmpty else { return false }
+      return value == second[key]
+    }
+  }
+
+  func matches(_ request: UNNotificationRequest, ids: Set<Int>) -> Bool {
+    if let numeric = Int(request.identifier), ids.contains(numeric) { return true }
+    return roomNotificationId(request.content.userInfo).map { ids.contains($0) } ?? false
+  }
+
   func toPendingNotification(_ request: UNNotificationRequest) -> PendingNotification? {
     stateLock.lock()
     defer { stateLock.unlock() }
@@ -243,7 +265,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       return nil
     }
     return PendingNotification(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
       schedule: schedule

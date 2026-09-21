@@ -3,6 +3,12 @@ package app.tauri.notification
 import android.content.Context
 
 internal enum class PushOutcome {
+    DISABLED,
+    INVALID_PAYLOAD,
+    MISSING_ROOM,
+    MISSING_RECIPIENT,
+    WRONG_RECIPIENT,
+    READ_DISMISSED,
     DECRYPTED,
     PLAINTEXT,
     HIDDEN_BY_SETTING,
@@ -11,6 +17,7 @@ internal enum class PushOutcome {
     NO_NATIVE_LIB,
     DECRYPT_FAILED,
     EMPTY_BODY,
+    REPLAY_DROPPED,
     EMBEDDED_STARTED,
     EMBEDDED_READY,
     EMBEDDED_SOCKET_FAILED,

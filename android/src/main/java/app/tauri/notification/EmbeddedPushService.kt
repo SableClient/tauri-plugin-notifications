@@ -215,13 +215,10 @@ class EmbeddedPushService : Service() {
                     inFlight.remove(key)
                     return@post
                 }
-                val dispatched = try {
-                    NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) == true
+                try {
+                    if (activation) PushRenderWorker.enqueue(this, body)
+                    NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
                 } catch (_: Exception) {
-                    inFlight.remove(key)
-                    return@post
-                }
-                if (activation && !dispatched) {
                     inFlight.remove(key)
                     return@post
                 }

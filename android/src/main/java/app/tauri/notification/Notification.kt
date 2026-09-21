@@ -32,6 +32,8 @@ class JSObjectDeserializer : JsonDeserializer<JSObject>() {
 /** One entry of a MessagingStyle conversation; a null [senderName] means the device owner. */
 @InvokeArg
 class NotificationMessage {
+  var eventId: String? = null
+  var encrypted: Boolean = false
   lateinit var body: String
   var timestamp: Long = 0
   var senderName: String? = null

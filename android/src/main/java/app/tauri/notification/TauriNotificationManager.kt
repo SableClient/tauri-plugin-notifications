@@ -117,7 +117,14 @@ class TauriNotificationManager(
 
   private fun trigger(notificationManager: NotificationManagerCompat, notification: Notification): Int {
     cancelTimerForNotification(notification.id)
-    buildNotification(notificationManager, notification)
+    synchronized(PushNotificationGate) {
+      if (notification.schedule == null && NotificationReceipts.shouldDrop(context, notification.id,
+          notification.messages?.lastOrNull()?.eventId)) {
+        PushDiagnostics.record(context, PushOutcome.REPLAY_DROPPED)
+        return notification.id
+      }
+      buildNotification(notificationManager, notification)
+    }
 
     return notification.id
   }
@@ -159,7 +166,12 @@ class TauriNotificationManager(
       .setGroupSummary(notification.isGroupSummary)
     val messages = notification.messages
     if (!messages.isNullOrEmpty()) {
-      mBuilder.setStyle(buildMessagingStyle(notification, messages))
+      val style = buildMessagingStyle(notification, messages)
+      mBuilder.setStyle(style)
+      style.messages.lastOrNull()?.let { mBuilder.setWhen(it.timestamp) }
+      style.messages.lastOrNull()?.extras?.getString(ConversationHistory.EVENT_KEY)?.let {
+        notification.extra?.put("event_id", it)
+      }
     } else if (notification.largeBody != null) {
       // support multiline text
       mBuilder.setStyle(
@@ -215,11 +227,16 @@ class TauriNotificationManager(
     }
     createActionIntents(notification, mBuilder)
     // notificationId is a unique int for each notification that you must define
+    val latestEvent = notification.messages?.lastOrNull()?.eventId
+    if (latestEvent != null && ConversationHistory.read(context, notification.id).any {
+        it.extras.getString(ConversationHistory.EVENT_KEY) == latestEvent
+      }) mBuilder.setSilent(true)
     val buildNotification = mBuilder.build()
     if (notification.schedule != null) {
       triggerScheduledNotification(buildNotification, notification)
     } else {
       notificationManager.notify(notification.id, buildNotification)
+      notification.messages?.forEach { NotificationReceipts.record(context, notification.id, it.eventId) }
       try {
         NotificationPlugin.triggerNotification(notification)
       } catch (e: JSONException) {
@@ -241,12 +258,26 @@ class TauriNotificationManager(
     if (notification.isGroupConversation) {
       style.conversationTitle = notification.title
     }
+    val retained = if (messages.any { it.eventId != null }) {
+      ConversationHistory.read(context, notification.id).toMutableList()
+    } else mutableListOf()
     for (message in messages) {
       val sender = message.senderName?.let { name ->
         Person.Builder().setName(name).setKey(message.senderKey).build()
       }
-      style.addMessage(message.body, message.timestamp, sender)
+      val index = retained.indexOfFirst { message.eventId != null &&
+        it.extras.getString(ConversationHistory.EVENT_KEY) == message.eventId }
+      val state = UnifiedPushStateStore(context)
+      val hidden = !state.showContent || (message.encrypted && !state.showEncryptedContent)
+      val incoming = NotificationCompat.MessagingStyle.Message(if (hidden) "New message" else message.body,
+        if (index >= 0) retained[index].timestamp else message.timestamp, sender).also {
+          if (index >= 0) it.extras.putAll(retained[index].extras)
+          it.extras.putString(ConversationHistory.EVENT_KEY, message.eventId)
+          it.extras.putBoolean(ConversationHistory.ENCRYPTED_KEY, message.encrypted)
+        }
+      if (index >= 0) retained[index] = incoming else retained.add(incoming)
     }
+    retained.takeLast(ConversationHistory.LIMIT).forEach { style.addMessage(it) }
     return style
   }
 

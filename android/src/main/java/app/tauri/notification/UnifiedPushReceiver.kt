@@ -16,6 +16,14 @@ import org.unifiedpush.android.connector.data.PushMessage
  */
 class UnifiedPushReceiver : PushService() {
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
+        if (NotificationPlugin.instance == null) {
+            val state = UnifiedPushStateStore(this)
+            if (!state.acceptsUnifiedPush(instance)) return
+            state.endpoint = endpoint.url
+            state.p256dh = endpoint.pubKeySet?.pubKey
+            state.auth = endpoint.pubKeySet?.auth
+            PushRegistrationWorker.enqueue(this)
+        }
         NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
             endpoint.url,
             endpoint.pubKeySet?.pubKey,
@@ -39,19 +47,15 @@ class UnifiedPushReceiver : PushService() {
     override fun onMessage(message: PushMessage, instance: String) {
         val content = String(message.content, Charsets.UTF_8)
         val state = UnifiedPushStateStore(this)
-        if (instance != state.activeInstance || state.activeProvider != "unifiedpush") return
-        // Always show the native notification immediately from the push payload.
-        // This eliminates the JS round-trip delay on the warm path (app alive in
-        // background). JS still receives the push-message event for in-app badge
-        // updates and notification enrichment (inbox grouping, fetched content
-        // for event_id_only payloads). When JS calls sendNotification() with the
-        // same notification ID, Android UPDATES the existing notification rather
-        // than showing a duplicate. If no JS push-message listener is attached,
-        // NotificationPlugin.onUnifiedPushMessage drops the event and the native
-        // post stands alone.
-        if (!PushWorkForegroundService.render(this, content)) {
-            UnifiedPushNotifier.showFromPushInBackground(this, content)
+        if (!state.acceptsUnifiedPush(instance)) return
+        val validation = runCatching { org.json.JSONObject(content) }.getOrNull()
+        if (validation?.has("ack_token") == true && validation.has("app_id") && !validation.has("notification")) {
+            PushRenderWorker.enqueue(this, content)
+            NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
+            return
         }
+        // WorkManager owns cold rendering; JS retires alerts for active/read rooms.
+        PushRenderWorker.enqueue(this, content)
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
 }

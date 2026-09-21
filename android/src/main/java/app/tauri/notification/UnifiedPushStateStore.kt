@@ -42,6 +42,12 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var distributor: String?
     get() = prefs.getString("up-distributor", null)
     set(value) = prefs.edit().putString("up-distributor", value).apply()
+
+  fun acceptsUnifiedPush(instance: String): Boolean =
+    instance == activeInstance &&
+      (activeProvider == "unifiedpush" ||
+        (activeProvider == "fcm" && distributor == context.packageName))
+
   var vapid: String?
     get() = prefs.getString("up-vapid", null)
     set(value) = prefs.edit().putString("up-vapid", value).apply()
@@ -169,6 +175,16 @@ internal class UnifiedPushStateStore(private val context: Context) {
   }
 
   /** Mirrors the app's "show encrypted message content" setting. */
+  var showContent: Boolean
+    get() = prefs.getBoolean("up-show-content", false)
+    set(value) { prefs.edit().putBoolean("up-show-content", value).apply() }
+  var notificationsEnabled: Boolean
+    get() = prefs.getBoolean("up-enabled", true)
+    set(value) { prefs.edit().putBoolean("up-enabled", value).apply() }
+  var notificationSounds: Boolean
+    get() = prefs.getBoolean("up-sounds", true)
+    set(value) { prefs.edit().putBoolean("up-sounds", value).apply() }
+
   var showEncryptedContent: Boolean
     get() = prefs.getBoolean("up-show-encrypted", false)
     set(value) { prefs.edit().putBoolean("up-show-encrypted", value).apply() }

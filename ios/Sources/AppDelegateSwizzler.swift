@@ -76,8 +76,9 @@ final class PushForwarder: NSObject, UIApplicationDelegate {
   @objc func ta_application(_ application: UIApplication,
                             didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+    let rotated = AppDelegateSwizzler.plugin?.isRegisteringPush == false
     AppDelegateSwizzler.plugin?.handlePushTokenReceived(hex)
-    try? AppDelegateSwizzler.plugin?.trigger("push-token", data: ["token": hex])
+    try? AppDelegateSwizzler.plugin?.trigger("push-token", data: ["token": hex, "rotated": rotated])
     AppDelegateSwizzler.callOriginalDidRegister(
       self,
       #selector(UIApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:)),

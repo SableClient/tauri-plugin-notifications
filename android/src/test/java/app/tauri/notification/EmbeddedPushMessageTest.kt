@@ -64,8 +64,22 @@ class EmbeddedPushMessageTest {
     }
 
     @Test
+    fun forwardsActivationFromEmbeddedFcm() {
+        state.activeProvider = "fcm"
+        state.distributor = org.robolectric.RuntimeEnvironment.getApplication().packageName
+        kotlin.test.assertTrue(state.acceptsUnifiedPush(UnifiedPushStateStore.INSTANCE))
+        kotlin.test.assertFalse(state.acceptsUnifiedPush("stale-instance"))
+
+        plugin.onUnifiedPushMessage(message, UnifiedPushStateStore.INSTANCE)
+
+        verify(exactly = 1) { plugin.trigger("push-message", any<JSObject>()) }
+    }
+
+    @Test
     fun rejectsMessagesAfterSwitchingToFcm() {
         state.activeProvider = "fcm"
+        state.distributor = "external.distributor"
+        kotlin.test.assertFalse(state.acceptsUnifiedPush(UnifiedPushStateStore.INSTANCE))
         plugin.onUnifiedPushMessage(message, UnifiedPushStateStore.INSTANCE)
 
         verify(exactly = 0) { plugin.trigger(any(), any<JSObject>()) }

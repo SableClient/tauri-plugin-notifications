@@ -279,6 +279,10 @@ class Schedule {
  * One message of a conversation notification.
  */
 interface NotificationMessage {
+  /** Stable event ID for merging warm and push deliveries on Android. */
+  eventId?: string;
+  /** Whether the preview came from an encrypted message. Defaults to false. */
+  encrypted?: boolean;
   /** The message text. */
   body: string;
   /** When the message was sent, in milliseconds since the epoch. */

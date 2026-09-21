@@ -772,27 +772,25 @@ The plugin does **not** install this file for you — it's a packaging/deploymen
 
 ### Android Matrix push integration (Sable v1 and v2)
 
-Keep the mobile Rust notification calls asynchronous and await them. Calling the
-synchronous mobile bridge while Tauri holds its plugin-store lock can deadlock a
-WebView page-load callback. This includes `set_encrypted_content_allowed` and
-`take_push_diagnostics`, not only notification registration.
+Await asynchronous mobile Rust calls, including `set_encrypted_content_allowed`
+and `take_push_diagnostics`. Synchronous calls can deadlock page-load callbacks
+while Tauri holds its plugin-store lock.
 
-The Android renderer accepts a flat Matrix notification, an object under
-`notification`, or a JSON string under `notification`. Account identity may be on
-the envelope, the notification, or in `devices[].data.user_id` /
-`devices[].data.default_payload.user_id`. The latter is required for ntfy, which
-relays the Matrix gateway request unchanged. Conflicting account identities are
-rejected. Include the recipient in every pusher registration; the open UI account
-is not a substitute for a missing push recipient.
+Payloads may be flat or wrapped in `notification` as an object or JSON string.
+Include recipient `user_id` in the envelope, notification, or
+`devices[].data.user_id` / `devices[].data.default_payload.user_id` (ntfy).
+Conflicting recipients are
+rejected; the open UI account is never a fallback.
 
-A notification with no room is a control/count update and is not displayed. Zero
-unread clears the corresponding room notification. Encrypted messages are posted
-immediately with a generic preview. Optional host-native decryption then updates
-the same notification silently, only while that notification is still current and
-the encrypted-content policy still allows it. Missing keys or a host without the
-optional JNI decryptor leave the generic notification visible. Host apps must set
-the encrypted-content policy to the conjunction of their general preview and
-encrypted-preview settings. Decryption never uses another account's registration.
+Roomless updates are not displayed; zero unread clears the room alert. Encrypted
+messages start generic. Host JNI decryption silently updates current alerts only
+when both general and encrypted previews are enabled. Missing keys/decryptor keep
+the generic preview. Decryption never uses another account's registration.
+
+Each conversation retains eight visible messages. Hashes of the last 2,048 handled
+events suppress replays after dismissal/trimming; older events are not covered.
+The replay store contains no message text. Read/reply target the newest retained message,
+regardless of decryption order.
 
 Registration results need different server routes:
 

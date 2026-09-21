@@ -20,6 +20,11 @@ internal object PushPayloadDecryptor {
 
     private var loaded: Boolean? = null
 
+    private external fun nativeMaintainPush(storeDir: String, operation: String): String?
+
+    fun maintain(context: Context, operation: String): Boolean =
+        available() && runCatching { nativeMaintainPush(context.filesDir.absolutePath, operation) == "ok" }.getOrDefault(false)
+
     private external fun nativeDecryptPush(
         storeDir: String,
         userId: String,

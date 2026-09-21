@@ -324,6 +324,15 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    pub async fn set_push_policy(&self, enabled: bool, content: bool, encrypted_content: bool, sounds: bool) -> crate::Result<()> {
+        #[cfg(target_os = "android")]
+        return self.0.run_mobile_plugin_async::<()>("setPushPolicy", serde_json::json!({
+            "enabled": enabled, "content": content, "encryptedContent": encrypted_content, "sounds": sounds
+        })).await.map_err(Into::into);
+        #[cfg(target_os = "ios")]
+        { let _ = (enabled, content, encrypted_content, sounds); Ok(()) }
+    }
+
     pub async fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
         #[cfg(all(target_os = "android", feature = "push-notifications"))]
         {
