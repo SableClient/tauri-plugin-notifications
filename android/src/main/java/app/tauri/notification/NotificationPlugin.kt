@@ -835,7 +835,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       }
       return
     }
-    unifiedPushState.setUnifiedPushActive()
+    unifiedPushState.setUnifiedPushActive(registration.provider)
     unifiedPushState.endpoint = endpoint
     unifiedPushState.activeInstance = registration.instance
     unifiedPushState.p256dh = p256dh

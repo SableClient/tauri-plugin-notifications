@@ -186,7 +186,10 @@ internal class UnifiedPushStateStore(private val context: Context) {
       activeInstance = INSTANCE
     }
   }
-  fun setUnifiedPushActive() { activeProvider = "unifiedpush" }
+  /** The in-app FCM distributor also completes through the UnifiedPush callback. */
+  fun setUnifiedPushActive(provider: String) {
+    activeProvider = if (provider == "fcm") "fcm" else "unifiedpush"
+  }
 
   companion object {
     const val INSTANCE = "default"

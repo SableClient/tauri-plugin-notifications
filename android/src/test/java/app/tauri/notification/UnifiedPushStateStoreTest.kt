@@ -59,6 +59,15 @@ class UnifiedPushStateStoreTest {
     }
 
     @Test
+    fun preservesFcmWhenItsEmbeddedUnifiedPushDistributorCompletes() {
+        val store = newStore()
+
+        store.setUnifiedPushActive("fcm")
+
+        assertEquals("fcm", store.activeProvider)
+    }
+
+    @Test
     fun `remembers the built-in distributor choice separately from having none`() {
         val store = newStore()
 
