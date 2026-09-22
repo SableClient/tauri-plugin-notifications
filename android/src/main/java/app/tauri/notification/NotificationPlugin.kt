@@ -98,6 +98,17 @@ class SetEncryptedContentAllowedArgs {
 }
 
 @InvokeArg
+class PushAccountArgs {
+  var userId: String? = null
+  var deviceId: String? = null
+}
+
+@InvokeArg
+class SetPushAccountsArgs {
+  var accounts: List<PushAccountArgs> = emptyList()
+}
+
+@InvokeArg
 class DistributorArgs {
   var distributor: String? = null
 }
@@ -499,14 +510,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
     val user = args.userId?.takeIf { it.isNotEmpty() }
     val device = args.deviceId?.takeIf { it.isNotEmpty() }
-    if ((user != null && user != unifiedPushState.pushUserId) ||
-      (device != null && device != unifiedPushState.pushDeviceId)) {
-      PushNotificationGate.dismiss(activity, null) {
-        if (user != null) unifiedPushState.pushUserId = user
-        if (device != null) unifiedPushState.pushDeviceId = device
-        notificationManager.cancelAll()
-      }
-    }
+    if (user != null) unifiedPushState.pushUserId = user
+    if (device != null) unifiedPushState.pushDeviceId = device
+    unifiedPushState.rememberAccount(user, device)
 
     pendingPushRegistration = PushRegistration(
       requestedVapid,
@@ -737,6 +743,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
     val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE
     PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
+    unifiedPushState.pushAccounts = emptyMap()
     finishPushRegistrationError("Push registration cancelled by unregister", restoreEmbeddedRegistration = false)
     EmbeddedPushService.stop(activity)
 
@@ -1133,6 +1140,22 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     if (becameActive && unifiedPushState.activeProvider == "embedded") {
       EmbeddedPushService.start(activity, replay = true)
     }
+    invoke.resolve()
+  }
+
+  /**
+   * The signed-in accounts, so a cold push for one the app is not showing still
+   * renders and decrypts. The app owns the list: an account it drops here stops
+   * being recognised.
+   */
+  @Command
+  fun setPushAccounts(invoke: Invoke) {
+    val args = invoke.parseArgs(SetPushAccountsArgs::class.java)
+    unifiedPushState.pushAccounts = args.accounts.mapNotNull { account ->
+      val user = account.userId?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+      val device = account.deviceId?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+      user to device
+    }.toMap()
     invoke.resolve()
   }
 

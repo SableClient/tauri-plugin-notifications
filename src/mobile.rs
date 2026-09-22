@@ -324,6 +324,33 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    /// The signed-in accounts a cold push may address. The one endpoint serves
+    /// every account, so the active one is not the only recipient to accept.
+    pub async fn set_push_accounts(&self, accounts: Vec<(String, String)>) -> crate::Result<()> {
+        #[cfg(target_os = "android")]
+        {
+            let accounts = accounts
+                .into_iter()
+                .map(|(user_id, device_id)| {
+                    serde_json::json!({ "userId": user_id, "deviceId": device_id })
+                })
+                .collect::<Vec<_>>();
+            return self
+                .0
+                .run_mobile_plugin_async::<()>(
+                    "setPushAccounts",
+                    serde_json::json!({ "accounts": accounts }),
+                )
+                .await
+                .map_err(Into::into);
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = accounts;
+            Ok(())
+        }
+    }
+
     pub async fn set_push_policy(
         &self,
         enabled: bool,

@@ -54,8 +54,9 @@ object UnifiedPushNotifier {
             return
         }
         val userId = notification.optString("user_id")
-        val expectedUser = UnifiedPushStateStore(context).pushUserId
-        if (expectedUser != null && userId != expectedUser) {
+        val store = UnifiedPushStateStore(context)
+        val deviceId = store.deviceIdFor(userId)
+        if (store.knowsAnyAccount() && deviceId == null) {
             PushDiagnostics.record(context, if (userId.isEmpty()) PushOutcome.MISSING_RECIPIENT else PushOutcome.WRONG_RECIPIENT)
             return
         }
@@ -87,15 +88,14 @@ object UnifiedPushNotifier {
         }
         PushNotificationGate.post(context, id, revision) { post(context, notification, "Encrypted message", generation) }
 
-        val state = UnifiedPushStateStore(context)
-        if (!state.showContent || !state.showEncryptedContent) {
+        if (!store.showContent || !store.showEncryptedContent) {
             PushDiagnostics.record(context, PushOutcome.HIDDEN_BY_SETTING)
             return
         }
-        if (userId.isEmpty() || userId != state.pushUserId) return
-        val (clear, outcome) = decryptedEvent(context, notification)
+        if (deviceId == null) return
+        val (clear, outcome) = decryptedEvent(context, notification, userId, deviceId)
         PushDiagnostics.record(context, outcome)
-        if (clear == null || !state.notificationsEnabled || !state.showContent || !state.showEncryptedContent) return
+        if (clear == null || !store.notificationsEnabled || !store.showContent || !store.showEncryptedContent) return
         if (isRing(clear)) {
             PushNotificationGate.post(context, id, revision) {
                 manager.cancel(id)
@@ -416,11 +416,10 @@ object UnifiedPushNotifier {
 
     private fun decryptedEvent(
         context: Context,
-        notification: JSONObject
+        notification: JSONObject,
+        userId: String,
+        deviceId: String
     ): Pair<JSONObject?, PushOutcome> {
-        val state = UnifiedPushStateStore(context)
-        val userId = state.pushUserId ?: return null to PushOutcome.NO_ACCOUNT
-        val deviceId = state.pushDeviceId ?: return null to PushOutcome.NO_ACCOUNT
         val roomId = notification.optString("room_id").takeIf { it.isNotEmpty() }
             ?: return null to PushOutcome.NO_CONTENT
         val content = notification.optJSONObject("content")

@@ -228,6 +228,27 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun aSignedInAccountOtherThanTheActiveOneStillNotifies() {
+        val state = UnifiedPushStateStore(context)
+        state.pushUserId = "@alice:example.org"
+        state.pushDeviceId = "ALICE"
+        state.pushAccounts = mapOf("@bob:example.org" to "BOB")
+
+        UnifiedPushNotifier.showFromPush(
+            context,
+            pushPayload("!room:example.org", "\$bob", userId = "@bob:example.org")
+        )
+        assertEquals(1, notificationManager.activeNotifications.size)
+
+        UnifiedPushNotifier.showFromPush(
+            context,
+            pushPayload("!other:example.org", "\$stranger", userId = "@carol:example.org")
+        )
+        assertEquals(PushOutcome.WRONG_RECIPIENT.name, PushDiagnostics.drain(context).lastOutcome)
+        assertEquals(1, notificationManager.activeNotifications.size)
+    }
+
+    @Test
     fun hiddenPlaintextNeverReachesTheNotification() {
         context.getSharedPreferences("tauri-notifications", Context.MODE_PRIVATE)
             .edit().putBoolean("up-show-content", false).commit()

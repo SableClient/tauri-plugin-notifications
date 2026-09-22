@@ -66,6 +66,34 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var pushDeviceId: String?
     get() = prefs.getString("up-device-id", null)
     set(value) = prefs.edit().putString("up-device-id", value).apply()
+  /**
+   * Every signed-in account, keyed by user id. A push is delivered to the one
+   * endpoint whichever account it is for, so the account on screen is not the
+   * only one a cold render has to recognise.
+   */
+  var pushAccounts: Map<String, String>
+    get() = runCatching {
+      val stored = JSONObject(prefs.getString("up-accounts", "{}") ?: "{}")
+      stored.keys().asSequence()
+        .associateWith { stored.optString(it) }
+        .filterValues { it.isNotEmpty() }
+    }.getOrDefault(emptyMap())
+    set(value) = prefs.edit().putString("up-accounts", JSONObject(value).toString()).apply()
+
+  fun rememberAccount(userId: String?, deviceId: String?) {
+    if (userId.isNullOrEmpty() || deviceId.isNullOrEmpty()) return
+    if (pushAccounts[userId] == deviceId) return
+    pushAccounts = pushAccounts + (userId to deviceId)
+  }
+
+  /** The device whose store decrypts for `userId`, or null when it is a stranger. */
+  fun deviceIdFor(userId: String): String? {
+    if (userId.isEmpty()) return null
+    pushAccounts[userId]?.let { return it }
+    return if (userId == pushUserId) pushDeviceId else null
+  }
+
+  fun knowsAnyAccount(): Boolean = pushUserId != null || pushAccounts.isNotEmpty()
   /** Kept so a restart reuses the same endpoint. */
   var embeddedTopic: String?
     get() = prefs.getString("up-embedded-topic", null)
