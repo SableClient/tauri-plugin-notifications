@@ -466,6 +466,47 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun showFromPush_accountReadClearsThatAccountsAlertsOnly() {
+        UnifiedPushStateStore(context).pushAccounts =
+            mapOf("@alice:example.org" to "ALICE", "@bob:example.org" to "BOB")
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!one:example.org", "\$one"))
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!two:example.org", "\$two", userId = "@bob:example.org"))
+        TauriNotificationManager(NotificationStorage(context, com.fasterxml.jackson.databind.ObjectMapper()), null, context, null)
+            .schedule(app.tauri.notification.Notification().apply {
+                id = UnifiedPushNotifier.roomNotificationId("@alice:example.org", "!warm:example.org")
+                title = "Room"
+                extra = app.tauri.plugin.JSObject().put("user_id", "@alice:example.org")
+                messages = listOf(NotificationMessage().apply {
+                    eventId = "\$warm"; body = "warm"; timestamp = System.currentTimeMillis()
+                })
+            })
+        assertEquals(3, notificationManager.activeNotifications.size)
+
+        UnifiedPushNotifier.showFromPush(context, accountReadPayload("@alice:example.org"))
+
+        assertEquals(
+            listOf(UnifiedPushNotifier.roomNotificationId("@bob:example.org", "!two:example.org")),
+            notificationManager.activeNotifications.map { it.id }
+        )
+    }
+
+    @Test
+    fun showFromPush_accountReadForAStrangerOrNobodyClearsNothing() {
+        UnifiedPushStateStore(context).pushAccounts = mapOf("@alice:example.org" to "ALICE")
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!one:example.org", "\$one"))
+
+        UnifiedPushNotifier.showFromPush(context, accountReadPayload("@stranger:example.org"))
+        UnifiedPushNotifier.showFromPush(context, """{"notification":{"counts":{"unread":0}}}""")
+
+        assertEquals(1, notificationManager.activeNotifications.size)
+    }
+
+    private fun accountReadPayload(userId: String): String = JSONObject().put("notification", JSONObject()
+        .put("counts", JSONObject().put("unread", 0))
+        .put("devices", org.json.JSONArray().put(JSONObject().put("data", JSONObject().put("user_id", userId))))
+    ).toString()
+
+    @Test
     fun showFromPush_lateDecryptionDoesNotResurrectDismissedOrSupersededAlerts() {
         val state = UnifiedPushStateStore(context)
         state.pushUserId = "@alice:example.org"

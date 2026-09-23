@@ -7,6 +7,7 @@ import androidx.core.app.NotificationCompat
 internal object ConversationHistory {
     const val EVENT_KEY = "sable.push.event"
     const val ENCRYPTED_KEY = "sable.push.encrypted"
+    const val ACCOUNT_KEY = "sable.push.account"
     const val LIMIT = 8
 
     fun read(context: Context, id: Int): List<NotificationCompat.MessagingStyle.Message> {

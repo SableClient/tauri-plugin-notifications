@@ -49,13 +49,18 @@ object UnifiedPushNotifier {
             return
         }
         val roomId = notification.optString("room_id")
-        if (roomId.isEmpty()) {
-            PushDiagnostics.record(context, PushOutcome.MISSING_ROOM)
-            return
-        }
         val userId = notification.optString("user_id")
         val store = UnifiedPushStateStore(context)
         val deviceId = store.deviceIdFor(userId)
+        if (roomId.isEmpty()) {
+            if (deviceId != null && notification.optJSONObject("counts")?.optInt("unread", -1) == 0) {
+                PushDiagnostics.record(context, PushOutcome.ACCOUNT_READ_DISMISSED)
+                dismissAccount(context, userId)
+                return
+            }
+            PushDiagnostics.record(context, PushOutcome.MISSING_ROOM)
+            return
+        }
         if (store.knowsAnyAccount() && deviceId == null) {
             PushDiagnostics.record(context, if (userId.isEmpty()) PushOutcome.MISSING_RECIPIENT else PushOutcome.WRONG_RECIPIENT)
             return
@@ -129,6 +134,14 @@ object UnifiedPushNotifier {
     private const val GENERATION_KEY = "sable.push.generation"
     private const val EVENT_KEY = ConversationHistory.EVENT_KEY
     private const val ENCRYPTED_KEY = ConversationHistory.ENCRYPTED_KEY
+    private const val ACCOUNT_KEY = ConversationHistory.ACCOUNT_KEY
+
+    private fun dismissAccount(context: Context, userId: String) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.activeNotifications
+            .filter { it.tag == null && it.notification.extras.getString(ACCOUNT_KEY) == userId }
+            .forEach { active -> PushNotificationGate.dismiss(context, active.id) { manager.cancel(active.id) } }
+    }
 
     private fun post(
         context: Context,
@@ -191,7 +204,10 @@ object UnifiedPushNotifier {
         val state = UnifiedPushStateStore(context)
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(iconId)
-            .addExtras(Bundle().apply { putString(GENERATION_KEY, generation) })
+            .addExtras(Bundle().apply {
+                putString(GENERATION_KEY, generation)
+                if (userId.isNotEmpty()) putString(ACCOUNT_KEY, userId)
+            })
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)

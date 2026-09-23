@@ -15,6 +15,7 @@ import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import android.os.Build.VERSION.SDK_INT
+import android.os.Bundle
 import android.os.UserManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -164,6 +165,9 @@ class TauriNotificationManager(
       .setOngoing(notification.isOngoing)
       .setPriority(NotificationCompat.PRIORITY_DEFAULT)
       .setGroupSummary(notification.isGroupSummary)
+    notification.extra?.getString("user_id")?.let {
+      mBuilder.addExtras(Bundle().apply { putString(ConversationHistory.ACCOUNT_KEY, it) })
+    }
     val messages = notification.messages
     if (!messages.isNullOrEmpty()) {
       val style = buildMessagingStyle(notification, messages)
