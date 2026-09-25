@@ -29,6 +29,8 @@ internal enum class PushOutcome {
     EMBEDDED_DECRYPT_FAILED,
     EMBEDDED_REGISTRATION_TIMEOUT,
     DISCARDED,
+    FETCHED,
+    FETCH_FAILED,
 }
 
 internal data class PushDiagnosticsSnapshot(

@@ -82,6 +82,20 @@ object UnifiedPushNotifier {
             ?.notification?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
             ?.messages?.firstOrNull { eventId.isNotEmpty() && it.extras.getString(EVENT_KEY) == eventId }
             ?.extras?.getString(GENERATION_KEY) ?: UUID.randomUUID().toString()
+        if (!notification.has("type") && eventId.isNotEmpty() && deviceId != null) {
+            when (val fetched = PushPayloadDecryptor.fetch(context, userId, deviceId, roomId, eventId)) {
+                PushDecryptResult.Discard -> {
+                    PushDiagnostics.record(context, PushOutcome.DISCARDED)
+                    return
+                }
+                is PushDecryptResult.Success -> {
+                    val event = runCatching { JSONObject(fetched.clearEventJson) }.getOrNull()
+                    if (event != null) mergeFetched(notification, event)
+                    PushDiagnostics.record(context, if (event != null) PushOutcome.FETCHED else PushOutcome.FETCH_FAILED)
+                }
+                else -> PushDiagnostics.record(context, PushOutcome.FETCH_FAILED)
+            }
+        }
         val encrypted = notification.optString("type") == "m.room.encrypted"
         if (!encrypted) {
             if (isRing(notification)) {
@@ -166,6 +180,12 @@ object UnifiedPushNotifier {
                         ?.messages?.any { message -> message.extras.getString(GENERATION_KEY) == generation } == true
             }
             if (stillCurrent) post(context, notification, body, generation, silent = true)
+        }
+    }
+
+    internal fun mergeFetched(notification: JSONObject, event: JSONObject) {
+        for (key in event.keys()) {
+            if (!notification.has(key) && !event.isNull(key)) notification.put(key, event.get(key))
         }
     }
 
