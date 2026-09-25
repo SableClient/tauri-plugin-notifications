@@ -18,6 +18,7 @@ import org.robolectric.annotation.Config
 import io.mockk.every
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import io.mockk.verify
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -436,6 +437,76 @@ class UnifiedPushNotifierTest {
         } finally {
             unmockkObject(PushPayloadDecryptor)
         }
+    }
+
+    private fun encryptedPush(room: String, event: String): String {
+        val state = UnifiedPushStateStore(context)
+        state.pushUserId = "@alice:example.org"
+        state.pushDeviceId = "DEVICE"
+        state.showEncryptedContent = true
+        val payload = JSONObject(pushPayload(room, event))
+        payload.getJSONObject("notification").put("type", "m.room.encrypted")
+        return payload.toString()
+    }
+
+    @Test
+    fun showFromPush_postsNothingForAnEventThePushRulesSilence() {
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.decryptLocally(any(), any(), any(), any(), any()) } returns
+                PushDecryptResult.Discard
+            UnifiedPushNotifier.showFromPush(context, encryptedPush("!quiet:example.org", "\$reaction"))
+            assertTrue(shadowNotificationManager().allNotifications.isEmpty())
+            verify(exactly = 0) { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) }
+        } finally { unmockkObject(PushPayloadDecryptor) }
+    }
+
+    @Test
+    fun showFromPush_postsALocallyDecryptedMessageWithoutABaseline() {
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.decryptLocally(any(), any(), any(), any(), any()) } returns
+                PushDecryptResult.Success("""{"content":{"body":"straight away"}}""")
+            UnifiedPushNotifier.showFromPush(context, encryptedPush("!fast:example.org", "\$fast"))
+            val posted = shadowNotificationManager().getNotification(null, canonicalId("!fast:example.org"))!!
+            assertTrue(posted.extras.getString(Notification.EXTRA_TEXT)!!.contains("straight away"))
+            verify(exactly = 0) { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) }
+        } finally { unmockkObject(PushPayloadDecryptor) }
+    }
+
+    @Test
+    fun showFromPush_waitsForTheKeyWithoutABaselineWhenEveryEncryptedEventIsPushed() {
+        mockkObject(PushPayloadDecryptor)
+        try {
+            var baselineWasVisible = true
+            every { PushPayloadDecryptor.decryptLocally(any(), any(), any(), any(), any()) } returns
+                PushDecryptResult.NeedsKey(quietly = true)
+            every { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) } answers {
+                baselineWasVisible = shadowNotificationManager().allNotifications.isNotEmpty()
+                PushDecryptResult.Discard
+            }
+            UnifiedPushNotifier.showFromPush(context, encryptedPush("!msc4028:example.org", "\$edit"))
+            assertFalse(baselineWasVisible)
+            assertTrue(shadowNotificationManager().allNotifications.isEmpty())
+        } finally { unmockkObject(PushPayloadDecryptor) }
+    }
+
+    @Test
+    fun showFromPush_keepsTheBaselineWhileAMissingKeyIsFetched() {
+        mockkObject(PushPayloadDecryptor)
+        try {
+            var baselineWasVisible = false
+            every { PushPayloadDecryptor.decryptLocally(any(), any(), any(), any(), any()) } returns
+                PushDecryptResult.NeedsKey(quietly = false)
+            every { PushPayloadDecryptor.decrypt(any(), any(), any(), any(), any()) } answers {
+                baselineWasVisible = shadowNotificationManager().allNotifications.isNotEmpty()
+                PushDecryptResult.Success("""{"content":{"body":"after the key"}}""")
+            }
+            UnifiedPushNotifier.showFromPush(context, encryptedPush("!slow:example.org", "\$slow"))
+            assertTrue(baselineWasVisible)
+            val posted = shadowNotificationManager().getNotification(null, canonicalId("!slow:example.org"))!!
+            assertTrue(posted.extras.getString(Notification.EXTRA_TEXT)!!.contains("after the key"))
+        } finally { unmockkObject(PushPayloadDecryptor) }
     }
 
     @Test

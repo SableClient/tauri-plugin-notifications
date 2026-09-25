@@ -91,30 +91,74 @@ object UnifiedPushNotifier {
             PushNotificationGate.post(context, id, revision) { post(context, notification, null, generation) }
             return
         }
-        PushNotificationGate.post(context, id, revision) { post(context, notification, "Encrypted message", generation) }
-
-        if (!store.showContent || !store.showEncryptedContent) {
-            PushDiagnostics.record(context, PushOutcome.HIDDEN_BY_SETTING)
-            return
+        val event = encryptedEvent(notification)
+        val local = if (deviceId != null && event != null) {
+            PushPayloadDecryptor.decryptLocally(context, userId, deviceId, roomId, event)
+        } else null
+        when (local) {
+            PushDecryptResult.Discard -> {
+                PushDiagnostics.record(context, PushOutcome.DISCARDED)
+                return
+            }
+            is PushDecryptResult.Success -> {
+                PushDiagnostics.record(context, PushOutcome.DECRYPTED)
+                val clear = runCatching { JSONObject(local.clearEventJson) }.getOrNull()
+                if (clear == null) {
+                    PushNotificationGate.post(context, id, revision) { post(context, notification, "Encrypted message", generation) }
+                    return
+                }
+                showDecrypted(context, notification, clear, id, revision, generation, replacing = false)
+                return
+            }
+            else -> {}
+        }
+        val quietly = local is PushDecryptResult.NeedsKey && local.quietly
+        if (!quietly) {
+            PushNotificationGate.post(context, id, revision) { post(context, notification, "Encrypted message", generation) }
+            if (!store.showContent || !store.showEncryptedContent) {
+                PushDiagnostics.record(context, PushOutcome.HIDDEN_BY_SETTING)
+                return
+            }
         }
         if (deviceId == null) return
         val (clear, outcome) = decryptedEvent(context, notification, userId, deviceId)
         PushDiagnostics.record(context, outcome)
-        if (clear == null || !store.notificationsEnabled || !store.showContent || !store.showEncryptedContent) return
+        if (clear == null) return
+        showDecrypted(context, notification, clear, id, revision, generation, replacing = !quietly)
+    }
+
+    private fun showDecrypted(
+        context: Context,
+        notification: JSONObject,
+        clear: JSONObject,
+        id: Int,
+        revision: String,
+        generation: String,
+        replacing: Boolean,
+    ) {
+        val store = UnifiedPushStateStore(context)
+        if (!store.notificationsEnabled) return
+        val manager = context.getSystemService(NotificationManager::class.java)
         if (isRing(clear)) {
             PushNotificationGate.post(context, id, revision) {
-                manager.cancel(id)
+                if (replacing) manager.cancel(id)
                 postIncomingCall(context, notification, clear)
             }
             return
         }
-        val body = clear.optJSONObject("content")
+        val allowed = store.showContent && store.showEncryptedContent
+        val text = clear.optJSONObject("content")
             ?.optString("body")
             ?.takeIf { it.isNotEmpty() }
-        if (body == null) {
-            PushDiagnostics.record(context, PushOutcome.EMPTY_BODY)
+        if (text == null && allowed) PushDiagnostics.record(context, PushOutcome.EMPTY_BODY)
+        val body = text?.takeIf { allowed }
+        if (!replacing) {
+            PushNotificationGate.post(context, id, revision) {
+                post(context, notification, body ?: "Encrypted message", generation)
+            }
             return
         }
+        if (body == null) return
         PushNotificationGate.post(context, id, revision) {
             val stillCurrent = manager.activeNotifications.any {
                 it.id == id && it.tag == null &&
@@ -430,35 +474,34 @@ object UnifiedPushNotifier {
         return "Encrypted message"
     }
 
-    private fun decryptedEvent(
-        context: Context,
-        notification: JSONObject,
-        userId: String,
-        deviceId: String
-    ): Pair<JSONObject?, PushOutcome> {
-        val roomId = notification.optString("room_id").takeIf { it.isNotEmpty() }
-            ?: return null to PushOutcome.NO_CONTENT
-        val content = notification.optJSONObject("content")
-            ?: return null to PushOutcome.NO_CONTENT
-
-        val event = JSONObject()
+    private fun encryptedEvent(notification: JSONObject): String? {
+        val roomId = notification.optString("room_id").takeIf { it.isNotEmpty() } ?: return null
+        val content = notification.optJSONObject("content") ?: return null
+        return JSONObject()
             .put("type", "m.room.encrypted")
             .put("room_id", roomId)
             .put("content", content)
             .put("event_id", notification.optString("event_id"))
             .put("sender", notification.optString("sender"))
             .put("origin_server_ts", System.currentTimeMillis())
+            .toString()
+    }
+
+    private fun decryptedEvent(
+        context: Context,
+        notification: JSONObject,
+        userId: String,
+        deviceId: String
+    ): Pair<JSONObject?, PushOutcome> {
+        val roomId = notification.optString("room_id")
+        val event = encryptedEvent(notification) ?: return null to PushOutcome.NO_CONTENT
 
         val clear = when (
-            val result = PushPayloadDecryptor.decrypt(
-                context,
-                userId,
-                deviceId,
-                roomId,
-                event.toString(),
-            )
+            val result = PushPayloadDecryptor.decrypt(context, userId, deviceId, roomId, event)
         ) {
             is PushDecryptResult.Success -> result.clearEventJson
+            PushDecryptResult.Discard -> return null to PushOutcome.DISCARDED
+            is PushDecryptResult.NeedsKey -> return null to PushOutcome.DECRYPT_FAILED
             is PushDecryptResult.Failure -> return null to result.outcome
         }
 
