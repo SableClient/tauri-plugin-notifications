@@ -239,11 +239,7 @@ object UnifiedPushNotifier {
         }
         var actionEventId = eventId
 
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_CANCEL_CURRENT
-        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
         val state = UnifiedPushStateStore(context)
         val builder = NotificationCompat.Builder(context, channelId)
@@ -317,11 +313,7 @@ object UnifiedPushNotifier {
             .ifEmpty { "Unknown caller" }
 
         val notifId = callNotificationId(userId, roomId)
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_CANCEL_CURRENT
-        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         fun pending(action: String) = PendingIntent.getActivity(
             context,
             notifId + action.hashCode(),
@@ -380,8 +372,14 @@ object UnifiedPushNotifier {
         for (action in actions) {
             if (action == null) continue
             val actionIntent = buildPushIntent(context, notifId, roomId, eventId, userId, action.id)
+            val actionFlags = when {
+                action.input != true -> flags
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                else -> PendingIntent.FLAG_UPDATE_CURRENT
+            }
             val actionPendingIntent = PendingIntent.getActivity(
-                context, notifId + action.id.hashCode(), actionIntent, flags
+                context, notifId + action.id.hashCode(), actionIntent, actionFlags
             )
             val actionBuilder = NotificationCompat.Action.Builder(
                 R.drawable.ic_transparent, action.title, actionPendingIntent

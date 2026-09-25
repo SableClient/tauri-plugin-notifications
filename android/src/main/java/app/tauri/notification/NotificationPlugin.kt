@@ -242,10 +242,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     // Drain any intent that arrived via onNewIntent before load() ran.
     pendingIntent?.let {
       pendingIntent = null
-      // Skip if onIntent(activity.intent) above already handled the
-      // same intent — comparing by reference is the cheapest dedup
-      // (Tauri's TauriActivity calls setIntent() in onNewIntent, so
-      // activity.intent points at the same Intent instance).
+      // Skip only if the host activity called setIntent() with this
+      // intent; TauriActivity does not, so a buffered onNewIntent
+      // delivery is a separate intent from activity.intent.
       if (it !== intent) onIntent(it)
     }
   }

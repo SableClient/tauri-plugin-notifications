@@ -292,10 +292,7 @@ class TauriNotificationManager(
   ) {
     // Open intent
     val intent = buildIntent(notification, DEFAULT_PRESS_ACTION)
-    var flags = PendingIntent.FLAG_CANCEL_CURRENT
-    if (SDK_INT >= Build.VERSION_CODES.S) {
-      flags = flags or PendingIntent.FLAG_MUTABLE
-    }
+    val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     val pendingIntent = PendingIntent.getActivity(context, notification.id, intent, flags)
     mBuilder.setContentIntent(pendingIntent)
 
@@ -306,11 +303,18 @@ class TauriNotificationManager(
       for (notificationAction in actionGroup) {
         // TODO Add custom icons to actions
         val actionIntent = buildIntent(notification, notificationAction!!.id)
+        var actionFlags = flags
+        if (notificationAction.input == true) {
+          actionFlags = PendingIntent.FLAG_UPDATE_CURRENT
+          if (SDK_INT >= Build.VERSION_CODES.S) {
+            actionFlags = actionFlags or PendingIntent.FLAG_MUTABLE
+          }
+        }
         val actionPendingIntent = PendingIntent.getActivity(
           context,
           (notification.id) + notificationAction.id.hashCode(),
           actionIntent,
-          flags
+          actionFlags
         )
         val actionBuilder: NotificationCompat.Action.Builder = NotificationCompat.Action.Builder(
           R.drawable.ic_transparent,
@@ -340,12 +344,8 @@ class TauriNotificationManager(
       NOTIFICATION_IS_REMOVABLE_KEY,
       schedule == null || schedule.isRemovable()
     )
-    flags = 0
-    if (SDK_INT >= Build.VERSION_CODES.S) {
-      flags = PendingIntent.FLAG_MUTABLE
-    }
     val deleteIntent =
-      PendingIntent.getBroadcast(context, notification.id, dissmissIntent, flags)
+      PendingIntent.getBroadcast(context, notification.id, dissmissIntent, PendingIntent.FLAG_IMMUTABLE)
     mBuilder.setDeleteIntent(deleteIntent)
   }
 
