@@ -5,12 +5,12 @@ import UserNotifications
 final class NotificationTests: XCTestCase {
 
     func testMessagesKeepDistinctRequestsInTheSameConversation() throws {
-        func message(_ event: String, user: String = "@alice:example.org") throws -> Notification {
+        func message(_ event: String, user: String = "@alice:example.org") throws -> tauri_plugin_notifications.Notification {
             let data = try JSONSerialization.data(withJSONObject: [
                 "id": 42, "title": "Room", "body": event,
                 "extra": ["user_id": user, "room_id": "!room:example.org", "event_id": event]
             ])
-            return try JSONDecoder().decode(Notification.self, from: data)
+            return try JSONDecoder().decode(tauri_plugin_notifications.Notification.self, from: data)
         }
         let first = try message("$first")
         let second = try message("$second")
@@ -1103,7 +1103,7 @@ final class NotificationTests: XCTestCase {
         """
 
         let decoder = JSONDecoder()
-        let notification = try decoder.decode(Notification.self, from: json.data(using: .utf8)!)
+        let notification = try decoder.decode(tauri_plugin_notifications.Notification.self, from: json.data(using: .utf8)!)
 
         XCTAssertEqual(notification.id, 1)
         XCTAssertEqual(notification.title, "Test Title")
