@@ -1203,6 +1203,33 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   }
 
   @Command
+  fun pushHistory(invoke: Invoke) {
+    val data = JSObject()
+    data.put("entries", PushDiagnostics.history(activity.applicationContext))
+    invoke.resolve(data)
+  }
+
+  @Command
+  fun clearPushHistory(invoke: Invoke) {
+    PushDiagnostics.clearHistory(activity.applicationContext)
+    invoke.resolve()
+  }
+
+  @Command
+  fun pushTransport(invoke: Invoke) {
+    val provider = unifiedPushState.activeProvider
+    val data = JSObject()
+    provider?.let { data.put("provider", it) }
+    val distributor = when (provider) {
+      "embedded" -> EMBEDDED_DISTRIBUTOR
+      "unifiedpush" -> UnifiedPush.getSavedDistributor(activity)
+      else -> null
+    }
+    distributor?.let { data.put("distributor", it) }
+    invoke.resolve(data)
+  }
+
+  @Command
   fun takePushDiagnostics(invoke: Invoke) {
     val snapshot = PushDiagnostics.drain(activity.applicationContext)
 

@@ -1,6 +1,8 @@
 package app.tauri.notification
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal enum class PushOutcome {
     DISABLED,
@@ -29,7 +31,15 @@ internal enum class PushOutcome {
     EMBEDDED_DECRYPT_FAILED,
     EMBEDDED_REGISTRATION_TIMEOUT,
     DISCARDED,
+    DIAGNOSTIC_RECEIVED,
+    POSTED,
 }
+
+internal data class PushTrace(
+    val userId: String,
+    val roomId: String,
+    val eventId: String,
+)
 
 internal data class PushDiagnosticsSnapshot(
     val counts: Map<String, Int>,
@@ -42,16 +52,53 @@ internal object PushDiagnostics {
     private const val KEY_PREFIX = "push-outcome-"
     private const val KEY_LAST = "push-outcome-last"
     private const val KEY_LAST_AT = "push-outcome-last-at"
+    private const val KEY_HISTORY = "push-history"
+    const val HISTORY_LIMIT = 200
 
     @Synchronized
-    fun record(context: Context, outcome: PushOutcome) {
+    fun record(context: Context, outcome: PushOutcome, trace: PushTrace? = null) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val key = KEY_PREFIX + outcome.name
+        val at = System.currentTimeMillis()
+        val entry = JSONObject()
+            .put("at", at)
+            .put("outcome", outcome.name)
+        trace?.let {
+            if (it.userId.isNotEmpty()) entry.put("userId", it.userId)
+            if (it.roomId.isNotEmpty()) entry.put("roomId", it.roomId)
+            if (it.eventId.isNotEmpty()) entry.put("eventId", it.eventId)
+        }
+        val history = readHistory(prefs.getString(KEY_HISTORY, null))
+        history.put(entry)
         prefs.edit()
             .putInt(key, prefs.getInt(key, 0) + 1)
             .putString(KEY_LAST, outcome.name)
-            .putLong(KEY_LAST_AT, System.currentTimeMillis())
+            .putLong(KEY_LAST_AT, at)
+            .putString(KEY_HISTORY, trimmed(history).toString())
             .apply()
+    }
+
+    @Synchronized
+    fun history(context: Context): JSONArray {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return readHistory(prefs.getString(KEY_HISTORY, null))
+    }
+
+    @Synchronized
+    fun clearHistory(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_HISTORY).apply()
+    }
+
+    private fun readHistory(stored: String?): JSONArray =
+        stored?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
+
+    private fun trimmed(history: JSONArray): JSONArray {
+        if (history.length() <= HISTORY_LIMIT) return history
+        val kept = JSONArray()
+        for (index in history.length() - HISTORY_LIMIT until history.length()) {
+            kept.put(history.get(index))
+        }
+        return kept
     }
 
     @Synchronized

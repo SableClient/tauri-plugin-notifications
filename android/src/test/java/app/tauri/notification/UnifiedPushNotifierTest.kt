@@ -258,6 +258,34 @@ class UnifiedPushNotifierTest {
         assertFalse(shown.extras.toString().contains("secret text"))
     }
 
+    @Test
+    fun aDiagnosticPushIsRecordedAndNeverPosted() {
+        PushDiagnostics.clearHistory(context)
+        UnifiedPushStateStore(context).notificationsEnabled = false
+
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!diagnostic:sable.invalid", "${'$'}sable-diagnostic-abc"))
+
+        assertTrue(notificationManager.activeNotifications.isEmpty())
+        val entry = PushDiagnostics.history(context).getJSONObject(0)
+        assertEquals("DIAGNOSTIC_RECEIVED", entry.getString("outcome"))
+        assertEquals("${'$'}sable-diagnostic-abc", entry.getString("eventId"))
+        UnifiedPushStateStore(context).notificationsEnabled = true
+    }
+
+    @Test
+    fun aPostedPushIsTracedInTheHistory() {
+        PushDiagnostics.clearHistory(context)
+
+        UnifiedPushNotifier.showFromPush(context, pushPayload("!traced:example.org", "${'$'}traced"))
+
+        val outcomes = (0 until PushDiagnostics.history(context).length())
+            .map { PushDiagnostics.history(context).getJSONObject(it) }
+        val posted = outcomes.single { it.getString("outcome") == "POSTED" }
+        assertEquals("!traced:example.org", posted.getString("roomId"))
+        assertEquals("${'$'}traced", posted.getString("eventId"))
+        assertEquals("@alice:example.org", posted.getString("userId"))
+    }
+
     private fun pushPayload(
         roomId: String,
         eventId: String,

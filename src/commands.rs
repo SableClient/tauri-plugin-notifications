@@ -6,7 +6,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime, State, command, plugin::PermissionState};
 
-use crate::models::PushDiagnostics;
+use crate::models::{PushDiagnostics, PushHistory, PushTransport};
 use crate::{NotificationData, Notifications, Result};
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +223,39 @@ pub async fn request_ignore_battery_optimizations<R: Runtime>(
     return notification.request_ignore_battery_optimizations().await;
     #[cfg(desktop)]
     return notification.request_ignore_battery_optimizations();
+}
+
+#[command]
+pub async fn push_history<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<PushHistory> {
+    #[cfg(mobile)]
+    return notification.push_history().await;
+    #[cfg(desktop)]
+    return notification.push_history();
+}
+
+#[command]
+pub async fn clear_push_history<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<()> {
+    #[cfg(mobile)]
+    return notification.clear_push_history().await;
+    #[cfg(desktop)]
+    return notification.clear_push_history();
+}
+
+#[command]
+pub async fn push_transport<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<PushTransport> {
+    #[cfg(mobile)]
+    return notification.push_transport().await;
+    #[cfg(desktop)]
+    return notification.push_transport();
 }
 
 #[command]

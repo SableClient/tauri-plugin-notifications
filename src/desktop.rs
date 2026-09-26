@@ -410,6 +410,18 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    pub fn push_history(&self) -> crate::Result<crate::models::PushHistory> {
+        Ok(crate::models::PushHistory::default())
+    }
+
+    pub fn clear_push_history(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
+    pub fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
+        Ok(crate::models::PushTransport::default())
+    }
+
     pub fn take_push_diagnostics(&self) -> crate::Result<crate::models::PushDiagnostics> {
         Ok(crate::models::PushDiagnostics::default())
     }

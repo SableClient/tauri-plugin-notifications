@@ -34,48 +34,54 @@ object UnifiedPushNotifier {
     private const val DECLINE_ACTION = "sable-call-decline"
     private const val DEFAULT_RING_LIFETIME_MS = 30_000L
     private const val MAX_RING_LIFETIME_MS = 120_000L
+    const val DIAGNOSTIC_EVENT_PREFIX = "\$sable-diagnostic-"
 
     fun showFromPushInBackground(context: Context, rawMessage: String) {
         PushRenderWorker.enqueue(context, rawMessage)
     }
 
     fun showFromPush(context: Context, rawMessage: String, queuedRevision: String? = null) {
-        if (!UnifiedPushStateStore(context).notificationsEnabled) {
-            PushDiagnostics.record(context, PushOutcome.DISABLED)
-            return
-        }
         val notification = MatrixPushPayload.parse(rawMessage) ?: run {
             PushDiagnostics.record(context, PushOutcome.INVALID_PAYLOAD)
             return
         }
         val roomId = notification.optString("room_id")
         val userId = notification.optString("user_id")
+        val eventId = notification.optString("event_id")
+        val trace = PushTrace(userId, roomId, eventId)
+        if (eventId.startsWith(DIAGNOSTIC_EVENT_PREFIX)) {
+            PushDiagnostics.record(context, PushOutcome.DIAGNOSTIC_RECEIVED, trace)
+            return
+        }
+        if (!UnifiedPushStateStore(context).notificationsEnabled) {
+            PushDiagnostics.record(context, PushOutcome.DISABLED, trace)
+            return
+        }
         val store = UnifiedPushStateStore(context)
         val deviceId = store.deviceIdFor(userId)
         if (roomId.isEmpty()) {
             if (deviceId != null && notification.optJSONObject("counts")?.optInt("unread", -1) == 0) {
-                PushDiagnostics.record(context, PushOutcome.ACCOUNT_READ_DISMISSED)
+                PushDiagnostics.record(context, PushOutcome.ACCOUNT_READ_DISMISSED, trace)
                 dismissAccount(context, userId)
                 return
             }
-            PushDiagnostics.record(context, PushOutcome.MISSING_ROOM)
+            PushDiagnostics.record(context, PushOutcome.MISSING_ROOM, trace)
             return
         }
         if (store.knowsAnyAccount() && deviceId == null) {
-            PushDiagnostics.record(context, if (userId.isEmpty()) PushOutcome.MISSING_RECIPIENT else PushOutcome.WRONG_RECIPIENT)
+            PushDiagnostics.record(context, if (userId.isEmpty()) PushOutcome.MISSING_RECIPIENT else PushOutcome.WRONG_RECIPIENT, trace)
             return
         }
         val manager = context.getSystemService(NotificationManager::class.java)
         val id = if (userId.isNotEmpty()) roomNotificationId(userId, roomId) else fallbackNotificationId(roomId)
         val revision = queuedRevision ?: PushNotificationGate.revision(context, id)
         if (notification.optJSONObject("counts")?.optInt("unread", -1) == 0) {
-            PushDiagnostics.record(context, PushOutcome.READ_DISMISSED)
+            PushDiagnostics.record(context, PushOutcome.READ_DISMISSED, trace)
             PushNotificationGate.dismiss(context, id) { manager.cancel(id) }
             return
         }
-        val eventId = notification.optString("event_id")
         if (synchronized(PushNotificationGate) { NotificationReceipts.shouldDrop(context, id, eventId) }) {
-            PushDiagnostics.record(context, PushOutcome.REPLAY_DROPPED)
+            PushDiagnostics.record(context, PushOutcome.REPLAY_DROPPED, trace)
             return
         }
         val generation = manager.activeNotifications.firstOrNull { it.id == id && it.tag == null }
@@ -97,11 +103,11 @@ object UnifiedPushNotifier {
         } else null
         when (local) {
             PushDecryptResult.Discard -> {
-                PushDiagnostics.record(context, PushOutcome.DISCARDED)
+                PushDiagnostics.record(context, PushOutcome.DISCARDED, trace)
                 return
             }
             is PushDecryptResult.Success -> {
-                PushDiagnostics.record(context, PushOutcome.DECRYPTED)
+                PushDiagnostics.record(context, PushOutcome.DECRYPTED, trace)
                 val clear = runCatching { JSONObject(local.clearEventJson) }.getOrNull()
                 if (clear == null) {
                     PushNotificationGate.post(context, id, revision) { post(context, notification, "Encrypted message", generation) }
@@ -116,13 +122,13 @@ object UnifiedPushNotifier {
         if (!quietly) {
             PushNotificationGate.post(context, id, revision) { post(context, notification, "Encrypted message", generation) }
             if (!store.showContent || !store.showEncryptedContent) {
-                PushDiagnostics.record(context, PushOutcome.HIDDEN_BY_SETTING)
+                PushDiagnostics.record(context, PushOutcome.HIDDEN_BY_SETTING, trace)
                 return
             }
         }
         if (deviceId == null) return
         val (clear, outcome) = decryptedEvent(context, notification, userId, deviceId)
-        PushDiagnostics.record(context, outcome)
+        PushDiagnostics.record(context, outcome, trace)
         if (clear == null) return
         showDecrypted(context, notification, clear, id, revision, generation, replacing = !quietly)
     }
@@ -150,7 +156,7 @@ object UnifiedPushNotifier {
         val text = clear.optJSONObject("content")
             ?.optString("body")
             ?.takeIf { it.isNotEmpty() }
-        if (text == null && allowed) PushDiagnostics.record(context, PushOutcome.EMPTY_BODY)
+        if (text == null && allowed) PushDiagnostics.record(context, PushOutcome.EMPTY_BODY, traceOf(notification))
         val body = text?.takeIf { allowed }
         if (!replacing) {
             PushNotificationGate.post(context, id, revision) {
@@ -234,7 +240,7 @@ object UnifiedPushNotifier {
         }
 
         if (NotificationReceipts.shouldDrop(context, notifId, eventId)) {
-            PushDiagnostics.record(context, PushOutcome.REPLAY_DROPPED)
+            PushDiagnostics.record(context, PushOutcome.REPLAY_DROPPED, traceOf(notification))
             return
         }
         var actionEventId = eventId
@@ -299,6 +305,7 @@ object UnifiedPushNotifier {
 
         NotificationManagerCompat.from(context).notify(notifId, builder.build())
         NotificationReceipts.record(context, notifId, eventId)
+        PushDiagnostics.record(context, PushOutcome.POSTED, traceOf(notification))
     }
 
     private fun postIncomingCall(context: Context, notification: JSONObject, event: JSONObject) {
@@ -345,6 +352,7 @@ object UnifiedPushNotifier {
             .setTimeoutAfter(ringLifetimeMs(event))
 
         NotificationManagerCompat.from(context).notify(notifId, builder.build())
+        PushDiagnostics.record(context, PushOutcome.POSTED, traceOf(notification))
     }
 
     /** Clamped: a broken sender clock must not ring forever. */
@@ -459,10 +467,16 @@ object UnifiedPushNotifier {
         return intent
     }
 
+    private fun traceOf(notification: JSONObject) = PushTrace(
+        notification.optString("user_id"),
+        notification.optString("room_id"),
+        notification.optString("event_id"),
+    )
+
     private fun messageText(context: Context, notification: JSONObject): String {
         if (!UnifiedPushStateStore(context).showContent) return "New message"
         if (notification.optString("type") != "m.room.encrypted") {
-            PushDiagnostics.record(context, PushOutcome.PLAINTEXT)
+            PushDiagnostics.record(context, PushOutcome.PLAINTEXT, traceOf(notification))
             return notification.optJSONObject("content")
                 ?.optString("body")
                 ?.takeIf { it.isNotEmpty() }

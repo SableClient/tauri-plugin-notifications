@@ -35,6 +35,9 @@ It allows all notification related features.
 - `allow-set-push-message-listener-active`
 - `allow-set-encrypted-content-allowed`
 - `allow-take-push-diagnostics`
+- `allow-push-history`
+- `allow-clear-push-history`
+- `allow-push-transport`
 - `allow-is-ignoring-battery-optimizations`
 - `allow-request-ignore-battery-optimizations`
 - `allow-list-distributors`
@@ -150,6 +153,32 @@ Enables the check_permissions command without any pre-configured scope.
 <td>
 
 Denies the check_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-clear-push-history`
+
+</td>
+<td>
+
+Enables the clear_push_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-clear-push-history`
+
+</td>
+<td>
+
+Denies the clear_push_history command without any pre-configured scope.
 
 </td>
 </tr>
@@ -410,6 +439,58 @@ Enables the permission_state command without any pre-configured scope.
 <td>
 
 Denies the permission_state command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-push-history`
+
+</td>
+<td>
+
+Enables the push_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-push-history`
+
+</td>
+<td>
+
+Denies the push_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-push-transport`
+
+</td>
+<td>
+
+Enables the push_transport command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-push-transport`
+
+</td>
+<td>
+
+Denies the push_transport command without any pre-configured scope.
 
 </td>
 </tr>

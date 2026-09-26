@@ -403,6 +403,48 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    pub async fn push_history(&self) -> crate::Result<crate::models::PushHistory> {
+        #[cfg(target_os = "android")]
+        {
+            self.0
+                .run_mobile_plugin_async("pushHistory", ())
+                .await
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(crate::models::PushHistory::default())
+        }
+    }
+
+    pub async fn clear_push_history(&self) -> crate::Result<()> {
+        #[cfg(target_os = "android")]
+        {
+            self.0
+                .run_mobile_plugin_async("clearPushHistory", ())
+                .await
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(())
+        }
+    }
+
+    pub async fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
+        #[cfg(target_os = "android")]
+        {
+            self.0
+                .run_mobile_plugin_async("pushTransport", ())
+                .await
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(crate::models::PushTransport::default())
+        }
+    }
+
     pub async fn take_push_diagnostics(&self) -> crate::Result<PushDiagnostics> {
         #[cfg(target_os = "android")]
         {
