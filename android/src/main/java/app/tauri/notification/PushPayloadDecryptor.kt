@@ -46,6 +46,24 @@ internal object PushPayloadDecryptor {
         eventJson: String,
     ): String?
 
+    private external fun nativeFetchPush(
+        storeDir: String,
+        userId: String,
+        deviceId: String,
+        roomId: String,
+        eventId: String,
+    ): String?
+
+    fun fetch(
+        context: Context,
+        userId: String,
+        deviceId: String,
+        roomId: String,
+        eventId: String,
+    ): PushDecryptResult = run(context) { storeDir ->
+        nativeFetchPush(storeDir, userId, deviceId, roomId, eventId)
+    }
+
     private fun available(): Boolean {
         loaded?.let { return it }
 

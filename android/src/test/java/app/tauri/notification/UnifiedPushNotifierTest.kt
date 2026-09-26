@@ -727,6 +727,64 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun showFromPush_eventIdOnlyPushIsFetchedBeforeItIsShown() {
+        UnifiedPushStateStore(context).pushAccounts = mapOf("@alice:example.org" to "ALICE")
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.fetch(any(), "@alice:example.org", "ALICE", "!bare:example.org", "\$bare") } returns
+                PushDecryptResult.Success(
+                    """{"type":"m.room.message","content":{"body":"fetched text"},"sender":"@bob:example.org",""" +
+                        """"sender_display_name":"Bob","room_name":"Fetched room","room_avatar_url":null}"""
+                )
+            val payload = JSONObject().put("room_id", "!bare:example.org").put("event_id", "\$bare")
+                .put("user_id", "@alice:example.org").toString()
+
+            UnifiedPushNotifier.showFromPush(context, payload)
+
+            val posted = shadowNotificationManager().getNotification(null, canonicalId("!bare:example.org"))!!
+            assertEquals("Fetched room", posted.extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE))
+            val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)!!
+            assertEquals("fetched text", style.messages.last().text)
+            assertEquals("Bob", style.messages.last().person?.name)
+        } finally {
+            unmockkObject(PushPayloadDecryptor)
+        }
+    }
+
+    @Test
+    fun showFromPush_eventIdOnlyPushTheRulesSilenceIsDiscarded() {
+        UnifiedPushStateStore(context).pushAccounts = mapOf("@alice:example.org" to "ALICE")
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.fetch(any(), any(), any(), any(), any()) } returns PushDecryptResult.Discard
+            val payload = JSONObject().put("room_id", "!quiet:example.org").put("event_id", "\$quiet")
+                .put("user_id", "@alice:example.org").toString()
+
+            UnifiedPushNotifier.showFromPush(context, payload)
+
+            assertNull(shadowNotificationManager().getNotification(null, canonicalId("!quiet:example.org")))
+        } finally {
+            unmockkObject(PushPayloadDecryptor)
+        }
+    }
+
+    @Test
+    fun aFetchedRingIsRecognisedAndNeverOverwritesThePayload() {
+        val notification = JSONObject().put("room_id", "!call:example.org").put("event_id", "\$ring")
+        val fetched = JSONObject()
+            .put("type", "m.rtc.notification")
+            .put("content", JSONObject().put("notification_type", "ring"))
+            .put("room_id", "!other:example.org")
+            .put("room_avatar_url", JSONObject.NULL)
+
+        UnifiedPushNotifier.mergeFetched(notification, fetched)
+
+        assertTrue(UnifiedPushNotifier.isRing(notification))
+        assertEquals("!call:example.org", notification.getString("room_id"))
+        assertFalse(notification.has("room_avatar_url"))
+    }
+
+    @Test
     fun callNotificationIdNeverCollidesWithTheRoomsConversation() {
         assertNotEquals(
             UnifiedPushNotifier.roomNotificationId("@alice:example.org", "!r1:example.org"),
