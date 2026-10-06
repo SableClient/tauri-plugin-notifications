@@ -247,6 +247,20 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       // delivery is a separate intent from activity.intent.
       if (it !== intent) onIntent(it)
     }
+    activity.application.registerActivityLifecycleCallbacks(
+      HostActivityCallbacks(activity.javaClass, activity, ::onWebViewGone, ::onIntent)
+    )
+  }
+
+  internal fun onWebViewGone() {
+    hasClickedListener = false
+    hasActionListener = false
+    hasPushMessageListener = false
+    pendingPushRegistration?.let { registration ->
+      if (registration.phase == PushRegistrationPhase.UNIFIED_PUSH ||
+        registration.phase == PushRegistrationPhase.DISTRIBUTOR) retireUnifiedPush(registration.instance)
+    }
+    finishPushRegistrationError("Notification plugin destroyed during push registration")
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -260,16 +274,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
     onIntent(intent)
-  }
-
-  override fun onDestroy() {
-    pendingPushRegistration?.let { registration ->
-      if (registration.phase == PushRegistrationPhase.UNIFIED_PUSH ||
-        registration.phase == PushRegistrationPhase.DISTRIBUTOR) retireUnifiedPush(registration.instance)
-    }
-    finishPushRegistrationError("Notification plugin destroyed during push registration")
-    if (instance === this) instance = null
-    super.onDestroy()
   }
 
   fun onIntent(intent: Intent) {

@@ -69,7 +69,7 @@ class EmbeddedPushRegistrationTest {
 
     @After
     fun teardown() {
-        if (::plugin.isInitialized) plugin.onDestroy()
+        if (::plugin.isInitialized) plugin.onWebViewGone()
         unmockkObject(CachedKeyManager.Companion)
     }
 
