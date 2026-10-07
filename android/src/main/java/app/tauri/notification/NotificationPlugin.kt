@@ -54,6 +54,7 @@ class NotificationAction {
   lateinit var id: String
   var title: String? = null
   var input: Boolean? = null
+  var foreground: Boolean? = null
 }
 
 @InvokeArg
@@ -232,6 +233,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     
     this.manager = manager
     getConfig(PluginConfig::class.java)?.actionTypes?.let { notificationStorage.writeActionGroup(it) }
+    BackgroundActions.drain(activity).forEach(::triggerActionPerformed)
     
     notificationManager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -354,7 +356,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
   }
 
-  private fun triggerActionPerformed(data: JSObject) {
+  internal fun triggerActionPerformed(data: JSObject) {
     if (hasActionListener) {
       trigger("actionPerformed", data)
     } else {

@@ -95,6 +95,7 @@ class NotificationStorage(private val context: Context, private val jsonMapper: 
         editor.putString("id$index", action.id)
         editor.putString("title$index", action.title)
         editor.putBoolean("input$index", action.input ?: false)
+        editor.putBoolean("foreground$index", action.foreground ?: true)
       }
       editor.apply()
       Logger.debug(Logger.tags(STORAGE_TAG), "Saved action group ${type.id} with ${type.actions.size} actions")
@@ -110,12 +111,14 @@ class NotificationStorage(private val context: Context, private val jsonMapper: 
       val id = storage.getString("id$i", "")
       val title = storage.getString("title$i", "")
       val input = storage.getBoolean("input$i", false)
+      val foreground = storage.getBoolean("foreground$i", true)
       Logger.debug(Logger.tags(STORAGE_TAG), "Action $i: id=$id, title=$title, input=$input")
 
       val action = NotificationAction()
       action.id = id ?: ""
       action.title = title
       action.input = input
+      action.foreground = foreground
       actions[i] = action
     }
     return actions

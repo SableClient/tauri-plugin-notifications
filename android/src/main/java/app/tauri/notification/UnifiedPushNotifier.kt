@@ -406,9 +406,12 @@ object UnifiedPushNotifier {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 else -> PendingIntent.FLAG_UPDATE_CURRENT
             }
-            val actionPendingIntent = PendingIntent.getActivity(
-                context, notifId + action.id.hashCode(), actionIntent, actionFlags
-            )
+            val actionRequestCode = notifId + action.id.hashCode()
+            val actionPendingIntent = if (BackgroundActions.runsInBackground(action)) {
+                BackgroundActions.pendingIntent(context, actionIntent, actionRequestCode, actionFlags)
+            } else {
+                PendingIntent.getActivity(context, actionRequestCode, actionIntent, actionFlags)
+            }
             val actionBuilder = NotificationCompat.Action.Builder(
                 R.drawable.ic_transparent, action.title, actionPendingIntent
             )

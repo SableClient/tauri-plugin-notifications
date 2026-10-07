@@ -310,12 +310,12 @@ class TauriNotificationManager(
             actionFlags = actionFlags or PendingIntent.FLAG_MUTABLE
           }
         }
-        val actionPendingIntent = PendingIntent.getActivity(
-          context,
-          (notification.id) + notificationAction.id.hashCode(),
-          actionIntent,
-          actionFlags
-        )
+        val actionRequestCode = (notification.id) + notificationAction.id.hashCode()
+        val actionPendingIntent = if (BackgroundActions.runsInBackground(notificationAction)) {
+          BackgroundActions.pendingIntent(context, actionIntent, actionRequestCode, actionFlags)
+        } else {
+          PendingIntent.getActivity(context, actionRequestCode, actionIntent, actionFlags)
+        }
         val actionBuilder: NotificationCompat.Action.Builder = NotificationCompat.Action.Builder(
           R.drawable.ic_transparent,
           notificationAction.title,
