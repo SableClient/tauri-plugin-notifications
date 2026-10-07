@@ -63,6 +63,50 @@ pub struct Notifications<R: Runtime> {
 }
 
 #[cfg(target_os = "linux")]
+const DEFAULT_ACTION: &str = "default";
+
+#[cfg(target_os = "linux")]
+fn click_payload(
+    caller_id: i32,
+    extra: &std::collections::HashMap<String, serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({ "id": caller_id, "data": extra })
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_click<R: Runtime>(app: &AppHandle<R>, server_id: u32, payload: &serde_json::Value) {
+    let clicked = std::cell::Cell::new(false);
+    if let Err(e) = notify_rust::handle_action(server_id, |response| {
+        clicked.set(matches!(
+            response,
+            notify_rust::ActionResponse::Custom(DEFAULT_ACTION)
+        ));
+    }) {
+        log::warn!("Failed to listen for a notification click: {e}");
+        return;
+    }
+    if !clicked.get() {
+        return;
+    }
+
+    focus_app(app);
+    if let Err(e) = crate::listeners::trigger("notificationClicked", payload.to_string()) {
+        log::warn!("Failed to deliver a notification click: {e}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn focus_app<R: Runtime>(app: &AppHandle<R>) {
+    use tauri::Manager;
+
+    if let Some(window) = app.webview_windows().into_values().next() {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn active_lock_err(e: impl std::fmt::Display) -> crate::Error {
     crate::Error::Io(std::io::Error::other(format!(
         "active notifications mutex poisoned: {e}"
@@ -182,15 +226,20 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
             .or_else(|| self.app.config().product_name.clone());
         let body = self.data.body;
         let icon = self.data.icon;
+        #[cfg(target_os = "linux")]
+        let extra = self.data.extra;
         let identifier = self.app.config().identifier.clone();
         let app = self.app.clone();
 
-        let notification = imp::build_notification(
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut notification = imp::build_notification(
             title.as_deref(),
             body.as_deref(),
             icon.as_deref(),
             &identifier,
         )?;
+        #[cfg(target_os = "linux")]
+        notification.action(DEFAULT_ACTION, DEFAULT_ACTION);
 
         // `notify_rust::Notification::show()` is sync and runs an internal
         // blocking D-Bus call (via zbus's `block_on`). Calling it inside
@@ -211,6 +260,12 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
             Ok(handle) => {
                 use std::sync::atomic::Ordering;
                 use tauri::Manager;
+                let payload = click_payload(caller_id, &extra);
+                let server_id = handle.id();
+                let listener_app = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    wait_for_click(&listener_app, server_id, &payload);
+                });
                 let state = app.state::<Notifications<R>>();
                 let entry_id = state.active_counter.fetch_add(1, Ordering::Relaxed);
                 let entry = ActiveEntry {
@@ -382,6 +437,12 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub const fn set_click_listener_active(&self, _active: bool) -> crate::Result<()> {
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
     pub fn set_click_listener_active(&self, _active: bool) -> crate::Result<()> {
         Err(crate::Error::Io(std::io::Error::other(
             "Click listeners are not supported with notify-rust",
@@ -576,5 +637,35 @@ mod imp {
         let _ = identifier;
 
         Ok(notification)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::click_payload;
+    use std::collections::HashMap;
+
+    #[test]
+    fn click_payload_carries_the_id_and_the_extra_data() {
+        let extra = HashMap::from([
+            ("room_id".to_owned(), serde_json::json!("!room:example.org")),
+            ("user_id".to_owned(), serde_json::json!("@ada:example.org")),
+        ]);
+
+        assert_eq!(
+            click_payload(7, &extra),
+            serde_json::json!({
+                "id": 7,
+                "data": { "room_id": "!room:example.org", "user_id": "@ada:example.org" }
+            })
+        );
+    }
+
+    #[test]
+    fn click_payload_without_extra_data_has_an_empty_object() {
+        assert_eq!(
+            click_payload(-3, &HashMap::new()),
+            serde_json::json!({ "id": -3, "data": {} })
+        );
     }
 }
