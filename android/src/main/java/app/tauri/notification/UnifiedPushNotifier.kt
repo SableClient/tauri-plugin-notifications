@@ -35,6 +35,8 @@ object UnifiedPushNotifier {
     private const val DEFAULT_RING_LIFETIME_MS = 30_000L
     private const val MAX_RING_LIFETIME_MS = 120_000L
     const val DIAGNOSTIC_EVENT_PREFIX = "\$sable-diagnostic-"
+    private const val NOISY_KEY = "moe.sable.noisy"
+    internal const val NOTIFY_ONCE_WINDOW_MS = 5 * 60_000L
 
     fun showFromPushInBackground(context: Context, rawMessage: String) {
         PushRenderWorker.enqueue(context, rawMessage)
@@ -166,6 +168,7 @@ object UnifiedPushNotifier {
             }
             return
         }
+        if (clear.optBoolean(NOISY_KEY)) notification.put(NOISY_KEY, true)
         val allowed = store.showContent && store.showEncryptedContent
         val text = clear.optJSONObject("content")
             ?.optString("body")
@@ -195,6 +198,19 @@ object UnifiedPushNotifier {
         }
     }
 
+    internal fun alertCooling(alertedAt: Long?, now: Long): Boolean =
+        alertedAt != null && now >= alertedAt && now - alertedAt < NOTIFY_ONCE_WINDOW_MS
+
+    internal fun isNoisy(notification: JSONObject): Boolean {
+        if (notification.optBoolean(NOISY_KEY)) return true
+        val devices = notification.optJSONArray("devices") ?: return false
+        for (index in 0 until devices.length()) {
+            val tweaks = devices.optJSONObject(index)?.optJSONObject("tweaks") ?: continue
+            if (tweaks.has("sound") || tweaks.optBoolean("highlight")) return true
+        }
+        return false
+    }
+
     internal fun isRing(event: JSONObject): Boolean {
         val type = event.optString("type")
         if (type != RTC_NOTIFICATION_TYPE && type != RTC_NOTIFICATION_TYPE_UNSTABLE) return false
@@ -202,6 +218,7 @@ object UnifiedPushNotifier {
     }
 
     private const val GENERATION_KEY = "sable.push.generation"
+    private const val ALERTED_AT_KEY = "sable.push.alerted-at"
     private const val EVENT_KEY = ConversationHistory.EVENT_KEY
     private const val ENCRYPTED_KEY = ConversationHistory.ENCRYPTED_KEY
     private const val ACCOUNT_KEY = ConversationHistory.ACCOUNT_KEY
@@ -268,6 +285,11 @@ object UnifiedPushNotifier {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
         val state = UnifiedPushStateStore(context)
+        val alertedAt = context.getSystemService(NotificationManager::class.java)
+            .activeNotifications.firstOrNull { it.id == notifId && it.tag == null }
+            ?.notification?.extras?.getLong(ALERTED_AT_KEY)?.takeIf { it > 0 }
+        val now = System.currentTimeMillis()
+        val cooling = state.notifyOnce && !isNoisy(notification) && alertCooling(alertedAt, now)
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(iconId)
             .addExtras(Bundle().apply {
@@ -277,11 +299,12 @@ object UnifiedPushNotifier {
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(silent || state.notifyOnce)
+            .setOnlyAlertOnce(silent || cooling)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(GROUP_KEY)
 
         if (silent || !state.notificationSounds) builder.setSilent(true)
+        val alerts = !silent && !cooling
 
         // Same style as the warm path, so JS enrichment updates it in place.
         if (isInvite) {
@@ -293,6 +316,8 @@ object UnifiedPushNotifier {
             if (index >= 0 && !silent && state.showContent && state.showEncryptedContent) return
             // A repeated encrypted delivery must not replace an already decrypted preview.
             if (index >= 0) builder.setSilent(true)
+            val stamp = if (alerts && index < 0) now else alertedAt
+            if (stamp != null) builder.addExtras(Bundle().apply { putLong(ALERTED_AT_KEY, stamp) })
             val incoming = NotificationCompat.MessagingStyle.Message(
                 if (!state.showContent) "New message" else text.orEmpty(),
                 if (index >= 0) messages[index].timestamp else System.currentTimeMillis(),

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.ResolveInfo
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
@@ -503,6 +504,19 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun showFromPush_aDecryptedEventWhoseRuleRingsIsNeverQuieted() {
+        mockkObject(PushPayloadDecryptor)
+        try {
+            every { PushPayloadDecryptor.decryptLocally(any(), any(), any(), any(), any()) } returns
+                PushDecryptResult.Success("""{"content":{"body":"hi"},"moe.sable.noisy":true}""")
+            UnifiedPushNotifier.showFromPush(context, encryptedPush("!dm:example.org", "\$one"))
+            UnifiedPushNotifier.showFromPush(context, encryptedPush("!dm:example.org", "\$two"))
+            val posted = shadowNotificationManager().getNotification(null, canonicalId("!dm:example.org"))!!
+            assertTrue(posted.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
+        } finally { unmockkObject(PushPayloadDecryptor) }
+    }
+
+    @Test
     fun showFromPush_waitsForTheKeyWithoutABaselineWhenEveryEncryptedEventIsPushed() {
         mockkObject(PushPayloadDecryptor)
         try {
@@ -667,8 +681,7 @@ class UnifiedPushNotifierTest {
         // A tagged lookup for the same id must find nothing: warm
         // enrichment/clear uses the untagged key (null, id).
         assertNull(shadowNotificationManager().getNotification("!r1:example.org", id))
-        // A first cold push still alerts with the flag on: it only silences a repost.
-        assertTrue(posted!!.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        assertTrue(posted!!.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
         assertTrue(posted.flags and Notification.FLAG_AUTO_CANCEL != 0)
     }
 
@@ -875,9 +888,12 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
-    fun showFromPush_onlyNotifiesOnceForARoomUntilTheAlertIsDismissed() {
+    fun showFromPush_quietsARoomThatAlertedWithinTheNotifyOnceWindow() {
         val room = "!once:example.org"
         UnifiedPushNotifier.showFromPush(context, pushPayload(room, "${'$'}one", "first"))
+        val first = notificationManager.activeNotifications.single().notification
+        assertTrue(first.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
+
         UnifiedPushNotifier.showFromPush(context, pushPayload(room, "${'$'}two", "second"))
         val quiet = notificationManager.activeNotifications.single().notification
         assertTrue(quiet.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
@@ -886,5 +902,30 @@ class UnifiedPushNotifierTest {
         UnifiedPushNotifier.showFromPush(context, pushPayload(room, "${'$'}three", "third"))
         val loud = notificationManager.activeNotifications.single().notification
         assertTrue(loud.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
+    }
+
+    @Test
+    fun showFromPush_aRuleThatRingsIsNeverQuieted() {
+        val room = "!loud:example.org"
+        fun noisy(eventId: String) = JSONObject(pushPayload(room, eventId)).apply {
+            getJSONObject("notification").put(
+                "devices",
+                JSONArray().put(JSONObject().put("tweaks", JSONObject().put("sound", "default")))
+            )
+        }.toString()
+        UnifiedPushNotifier.showFromPush(context, noisy("${'$'}one"))
+        UnifiedPushNotifier.showFromPush(context, noisy("${'$'}two"))
+
+        val loud = notificationManager.activeNotifications.single().notification
+        assertTrue(loud.flags and Notification.FLAG_ONLY_ALERT_ONCE == 0)
+    }
+
+    @Test
+    fun alertCooling_endsWhenTheNotifyOnceWindowHasPassed() {
+        val window = UnifiedPushNotifier.NOTIFY_ONCE_WINDOW_MS
+        assertTrue(!UnifiedPushNotifier.alertCooling(null, 1_000))
+        assertTrue(UnifiedPushNotifier.alertCooling(1_000, 1_000 + window - 1))
+        assertTrue(!UnifiedPushNotifier.alertCooling(1_000, 1_000 + window))
+        assertTrue(!UnifiedPushNotifier.alertCooling(5_000, 1_000))
     }
 }
