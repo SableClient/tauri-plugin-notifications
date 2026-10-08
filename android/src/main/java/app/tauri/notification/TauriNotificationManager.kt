@@ -155,6 +155,7 @@ class TauriNotificationManager(
     notificationManager: NotificationManagerCompat,
     notification: Notification,
   ) {
+    if (repeatsWhatIsShown(notification)) return
     val channelId = notification.channelId ?: DEFAULT_NOTIFICATION_CHANNEL_ID
     val mBuilder = NotificationCompat.Builder(
       context, channelId
@@ -249,6 +250,18 @@ class TauriNotificationManager(
     }
   }
 
+  private fun displayedText(message: NotificationMessage): String {
+    val state = UnifiedPushStateStore(context)
+    val hidden = !state.showContent || (message.encrypted && !state.showEncryptedContent)
+    return if (hidden) "New message" else message.body
+  }
+
+  private fun repeatsWhatIsShown(notification: Notification): Boolean {
+    val messages = notification.messages
+    if (messages.isNullOrEmpty()) return false
+    return messages.all { ConversationHistory.shows(context, notification.id, it.eventId, displayedText(it)) }
+  }
+
   /** Renders a conversation as MessagingStyle, the style Android expects for chat. */
   private fun buildMessagingStyle(
     notification: Notification,
@@ -271,9 +284,7 @@ class TauriNotificationManager(
       }
       val index = retained.indexOfFirst { message.eventId != null &&
         it.extras.getString(ConversationHistory.EVENT_KEY) == message.eventId }
-      val state = UnifiedPushStateStore(context)
-      val hidden = !state.showContent || (message.encrypted && !state.showEncryptedContent)
-      val incoming = NotificationCompat.MessagingStyle.Message(if (hidden) "New message" else message.body,
+      val incoming = NotificationCompat.MessagingStyle.Message(displayedText(message),
         if (index >= 0) retained[index].timestamp else message.timestamp, sender).also {
           if (index >= 0) it.extras.putAll(retained[index].extras)
           it.extras.putString(ConversationHistory.EVENT_KEY, message.eventId)

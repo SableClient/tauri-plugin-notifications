@@ -10,17 +10,26 @@ internal object ConversationHistory {
     const val ACCOUNT_KEY = "sable.push.account"
     const val LIMIT = 8
 
-    fun read(context: Context, id: Int): List<NotificationCompat.MessagingStyle.Message> {
+    private fun shown(context: Context, id: Int): List<NotificationCompat.MessagingStyle.Message> {
         val active = context.getSystemService(NotificationManager::class.java)
             .activeNotifications.firstOrNull { it.id == id && it.tag == null } ?: return emptyList()
-        val state = UnifiedPushStateStore(context)
         return NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(active.notification)
-            ?.messages.orEmpty().map { message ->
-                val hidden = !state.showContent || (!state.showEncryptedContent &&
-                    message.extras.getBoolean(ENCRYPTED_KEY, true))
-                NotificationCompat.MessagingStyle.Message(
-                    if (hidden) "New message" else message.text, message.timestamp, message.person
-                ).also { it.extras.putAll(message.extras) }
-            }
+            ?.messages.orEmpty()
+    }
+
+    fun shows(context: Context, id: Int, eventId: String?, text: String): Boolean =
+        eventId != null && shown(context, id).any {
+            it.extras.getString(EVENT_KEY) == eventId && it.text.toString() == text
+        }
+
+    fun read(context: Context, id: Int): List<NotificationCompat.MessagingStyle.Message> {
+        val state = UnifiedPushStateStore(context)
+        return shown(context, id).map { message ->
+            val hidden = !state.showContent || (!state.showEncryptedContent &&
+                message.extras.getBoolean(ENCRYPTED_KEY, true))
+            NotificationCompat.MessagingStyle.Message(
+                if (hidden) "New message" else message.text, message.timestamp, message.person
+            ).also { it.extras.putAll(message.extras) }
+        }
     }
 }

@@ -327,7 +327,7 @@ object UnifiedPushNotifier {
                 it.extras.putString(GENERATION_KEY, generation)
                 it.extras.putBoolean(ENCRYPTED_KEY, notification.optString("type") == "m.room.encrypted")
             }
-            if (index >= 0 && silent && messages[index].text.toString() == incoming.text.toString()) return
+            if (ConversationHistory.shows(context, notifId, eventId.ifEmpty { null }, incoming.text.toString())) return
             if (index >= 0) {
                 if (silent) messages[index] = incoming
             } else messages.add(incoming)

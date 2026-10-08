@@ -87,15 +87,31 @@ class UnifiedPushNotifierTest {
             })
         }
         native.schedule(request)
-        val before = notificationManager.activeNotifications.single().notification.`when`
+        val alerted = notificationManager.activeNotifications.single().notification
         native.schedule(request)
         UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$second", "second"))
         val posted = notificationManager.activeNotifications.single().notification
         val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)!!
         assertEquals(listOf("first", "second"), style.messages.map { it.text.toString() })
-        assertEquals(before, posted.`when`)
-        assertNull(posted.sound)
-        assertNull(posted.vibrate)
+        assertSame(alerted, posted)
+    }
+
+    @Test
+    fun theRunningAppDoesNotRepostAnEventThePushAlreadyShowed() {
+        val room = "!local:example.org"
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$one", "hello"))
+        val alerted = notificationManager.activeNotifications.single().notification
+        val native = TauriNotificationManager(NotificationStorage(context, com.fasterxml.jackson.databind.ObjectMapper()),
+            null, context, null)
+        native.schedule(app.tauri.notification.Notification().apply {
+            id = UnifiedPushNotifier.roomNotificationId("@alice:example.org", room)
+            title = "Room"
+            channelId = "messages.v2"
+            messages = listOf(NotificationMessage().apply {
+                eventId = "\$one"; body = "hello"; senderName = "Alice"; timestamp = System.currentTimeMillis()
+            })
+        })
+        assertSame(alerted, notificationManager.activeNotifications.single().notification)
     }
 
     @Test
