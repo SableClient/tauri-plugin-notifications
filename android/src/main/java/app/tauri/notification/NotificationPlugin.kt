@@ -411,7 +411,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val args = invoke.parseArgs(RemoveActiveArgs::class.java)
 
     if (args.notifications.isEmpty()) {
-      androidx.work.WorkManager.getInstance(activity).cancelAllWorkByTag("push-render")
+      PushDelegates.get(activity).cancelPending(activity)
       PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
       invoke.resolve()
     } else {
@@ -1181,7 +1181,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.notificationSounds = args.sounds
     unifiedPushState.notifyOnce = args.notifyOnce
     if (!args.enabled || !args.content) {
-      androidx.work.WorkManager.getInstance(activity).cancelAllWorkByTag("push-render")
+      PushDelegates.get(activity).cancelPending(activity)
       PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
     }
     invoke.resolve()

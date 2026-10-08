@@ -48,6 +48,7 @@ class EmbeddedPushServiceTest {
 
     @Before
     fun setup() {
+        PushDelegates.override(MatrixPushDelegate())
         mockkObject(PushRenderWorker.Companion)
         every { PushRenderWorker.enqueue(any(), any()) } returns Unit
         service = Robolectric.buildService(EmbeddedPushService::class.java).create().get()
@@ -78,6 +79,7 @@ class EmbeddedPushServiceTest {
         service.onDestroy()
         NotificationPlugin.instance = null
         unmockkObject(PushRenderWorker.Companion)
+        PushDelegates.override(null)
     }
 
     private fun start() {

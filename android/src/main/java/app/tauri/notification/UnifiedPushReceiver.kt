@@ -22,7 +22,7 @@ class UnifiedPushReceiver : PushService() {
             state.endpoint = endpoint.url
             state.p256dh = endpoint.pubKeySet?.pubKey
             state.auth = endpoint.pubKeySet?.auth
-            PushRegistrationWorker.enqueue(this)
+            PushDelegates.get(this).endpointChanged(this)
         }
         NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
             endpoint.url,
@@ -48,14 +48,8 @@ class UnifiedPushReceiver : PushService() {
         val content = String(message.content, Charsets.UTF_8)
         val state = UnifiedPushStateStore(this)
         if (!state.acceptsUnifiedPush(instance)) return
-        val validation = runCatching { org.json.JSONObject(content) }.getOrNull()
-        if (validation?.has("ack_token") == true && validation.has("app_id") && !validation.has("notification")) {
-            PushRenderWorker.enqueue(this, content)
-            NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
-            return
-        }
-        // WorkManager owns cold rendering; JS retires alerts for active/read rooms.
-        PushRenderWorker.enqueue(this, content)
+        // The delegate owns cold rendering; JS retires alerts for active/read rooms.
+        PushDelegates.get(this).schedule(this, content)
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
 }

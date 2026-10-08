@@ -9,6 +9,10 @@
     </queries>
 
     <application>
+        <meta-data
+            android:name="app.tauri.notification.PUSH_DELEGATE"
+            android:value="app.tauri.notification.MatrixPushDelegate" />
+
         <receiver android:name="app.tauri.notification.TimedNotificationPublisher" android:exported="true" />
         <receiver android:name="app.tauri.notification.NotificationDismissReceiver" android:exported="false" />
         <receiver android:name="app.tauri.notification.NotificationActionReceiver" android:exported="false" />

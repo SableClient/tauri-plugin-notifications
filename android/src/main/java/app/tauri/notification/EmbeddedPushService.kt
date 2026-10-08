@@ -201,10 +201,10 @@ class EmbeddedPushService : Service() {
                 return@execute
             }
             PushDiagnostics.record(this, PushOutcome.EMBEDDED_DECRYPTED)
-            val payload = MatrixPushPayload.parse(body)
-            val activation = payload?.optString("ack_token")?.isNotEmpty() == true
+            val delegate = PushDelegates.get(this)
+            val activation = delegate.isActivation(body)
             try {
-                UnifiedPushNotifier.showFromPush(this, body)
+                delegate.render(this, body)
             } catch (_: Exception) {
                 Log.w(TAG, "Could not display the push notification")
                 handler.post { inFlight.remove(key) }
@@ -216,7 +216,7 @@ class EmbeddedPushService : Service() {
                     return@post
                 }
                 try {
-                    if (activation) PushRenderWorker.enqueue(this, body)
+                    if (activation) delegate.schedule(this, body)
                     NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
                 } catch (_: Exception) {
                     inFlight.remove(key)
