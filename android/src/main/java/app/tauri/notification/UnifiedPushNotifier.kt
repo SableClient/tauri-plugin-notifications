@@ -305,6 +305,7 @@ object UnifiedPushNotifier {
 
         if (silent || !state.notificationSounds) builder.setSilent(true)
         val alerts = !silent && !cooling
+        var repeat = false
 
         // Same style as the warm path, so JS enrichment updates it in place.
         if (isInvite) {
@@ -316,6 +317,7 @@ object UnifiedPushNotifier {
             if (index >= 0 && !silent && state.showContent && state.showEncryptedContent) return
             // A repeated encrypted delivery must not replace an already decrypted preview.
             if (index >= 0) builder.setSilent(true)
+            repeat = index >= 0
             val stamp = if (alerts && index < 0) now else alertedAt
             if (stamp != null) builder.addExtras(Bundle().apply { putLong(ALERTED_AT_KEY, stamp) })
             val incoming = NotificationCompat.MessagingStyle.Message(
@@ -348,9 +350,23 @@ object UnifiedPushNotifier {
             addReplyAction(context, builder, notifId, roomId, actionEventId, userId, flags)
         }
 
-        NotificationManagerCompat.from(context).notify(notifId, builder.build())
+        val built = builder.build()
+        NotificationManagerCompat.from(context).notify(notifId, built)
         NotificationReceipts.record(context, notifId, eventId)
-        PushDiagnostics.record(context, PushOutcome.POSTED, traceOf(notification))
+        AlertLog.posted(
+            context, "push", traceOf(notification), built,
+            listOfNotNull(
+                "replacement".takeIf { silent },
+                "notify-once".takeIf { cooling },
+                "sounds-off".takeIf { !state.notificationSounds },
+                "repeat".takeIf { repeat },
+            ),
+            listOf(
+                "noisy=${isNoisy(notification)}",
+                "notifyOnce=${state.notifyOnce}",
+                "alertedAgoMs=${alertedAt?.let { now - it }}",
+            ),
+        )
     }
 
     private fun postIncomingCall(context: Context, notification: JSONObject, event: JSONObject) {

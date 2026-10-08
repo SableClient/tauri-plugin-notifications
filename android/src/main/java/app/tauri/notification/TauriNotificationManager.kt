@@ -155,7 +155,10 @@ class TauriNotificationManager(
     notificationManager: NotificationManagerCompat,
     notification: Notification,
   ) {
-    if (repeatsWhatIsShown(notification)) return
+    if (repeatsWhatIsShown(notification)) {
+      AlertLog.skipped(context, "app", traceOf(notification), "already-shown")
+      return
+    }
     val channelId = notification.channelId ?: DEFAULT_NOTIFICATION_CHANNEL_ID
     val mBuilder = NotificationCompat.Builder(
       context, channelId
@@ -233,15 +236,23 @@ class TauriNotificationManager(
     createActionIntents(notification, mBuilder)
     // notificationId is a unique int for each notification that you must define
     val latestEvent = notification.messages?.lastOrNull()?.eventId
-    if (latestEvent != null && ConversationHistory.read(context, notification.id).any {
-        it.extras.getString(ConversationHistory.EVENT_KEY) == latestEvent
-      }) mBuilder.setSilent(true)
+    val repeat = latestEvent != null && ConversationHistory.read(context, notification.id).any {
+      it.extras.getString(ConversationHistory.EVENT_KEY) == latestEvent
+    }
+    if (repeat) mBuilder.setSilent(true)
     val buildNotification = mBuilder.build()
     if (notification.schedule != null) {
       triggerScheduledNotification(buildNotification, notification)
     } else {
       notificationManager.notify(notification.id, buildNotification)
       notification.messages?.forEach { NotificationReceipts.record(context, notification.id, it.eventId) }
+      AlertLog.posted(
+        context, "app", traceOf(notification), buildNotification,
+        listOfNotNull(
+          "silent".takeIf { notification.silent == true },
+          "repeat".takeIf { repeat },
+        ),
+      )
       try {
         NotificationPlugin.triggerNotification(notification)
       } catch (e: JSONException) {
@@ -249,6 +260,12 @@ class TauriNotificationManager(
       }
     }
   }
+
+  private fun traceOf(notification: Notification) = PushTrace(
+    notification.extra?.getString("user_id").orEmpty(),
+    notification.extra?.getString("room_id").orEmpty(),
+    notification.messages?.lastOrNull()?.eventId.orEmpty(),
+  )
 
   private fun displayedText(message: NotificationMessage): String {
     val state = UnifiedPushStateStore(context)

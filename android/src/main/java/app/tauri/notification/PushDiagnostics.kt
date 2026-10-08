@@ -58,7 +58,7 @@ internal object PushDiagnostics {
     const val HISTORY_LIMIT = 200
 
     @Synchronized
-    fun record(context: Context, outcome: PushOutcome, trace: PushTrace? = null) {
+    fun record(context: Context, outcome: PushOutcome, trace: PushTrace? = null, detail: String? = null) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val key = KEY_PREFIX + outcome.name
         val at = System.currentTimeMillis()
@@ -70,6 +70,7 @@ internal object PushDiagnostics {
             if (it.roomId.isNotEmpty()) entry.put("roomId", it.roomId)
             if (it.eventId.isNotEmpty()) entry.put("eventId", it.eventId)
         }
+        detail?.let { entry.put("detail", it) }
         val history = readHistory(prefs.getString(KEY_HISTORY, null))
         history.put(entry)
         prefs.edit()

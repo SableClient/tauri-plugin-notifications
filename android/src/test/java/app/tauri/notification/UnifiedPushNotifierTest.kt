@@ -937,6 +937,20 @@ class UnifiedPushNotifierTest {
     }
 
     @Test
+    fun aPostRecordsWhyItWasLoudOrQuiet() {
+        val room = "!logged:example.org"
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$one", "first"))
+        UnifiedPushNotifier.showFromPush(context, pushPayload(room, "\$two", "second"))
+        val posted = (0 until PushDiagnostics.history(context).length())
+            .map { PushDiagnostics.history(context).getJSONObject(it) }
+            .filter { it.optString("outcome") == "POSTED" && it.optString("roomId") == room }
+            .map { it.optString("detail") }
+        assertTrue(posted[0].contains("path=push") && posted[0].contains("quiet=none"))
+        assertTrue(posted[1].contains("quiet=notify-once") && posted[1].contains("onlyAlertOnce=true"))
+        assertTrue(posted.all { it.contains("importance=4") && it.contains("channel=messages.v2") })
+    }
+
+    @Test
     fun alertCooling_endsWhenTheNotifyOnceWindowHasPassed() {
         val window = UnifiedPushNotifier.NOTIFY_ONCE_WINDOW_MS
         assertTrue(!UnifiedPushNotifier.alertCooling(null, 1_000))
