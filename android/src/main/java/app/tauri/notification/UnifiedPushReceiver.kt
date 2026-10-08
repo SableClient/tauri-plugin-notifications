@@ -22,7 +22,7 @@ class UnifiedPushReceiver : PushService() {
             state.endpoint = endpoint.url
             state.p256dh = endpoint.pubKeySet?.pubKey
             state.auth = endpoint.pubKeySet?.auth
-            PushDelegates.get(this).endpointChanged(this)
+            PushDelegates.get(this).endpointChanged(this, endpoint.url, endpoint.pubKeySet?.pubKey, endpoint.pubKeySet?.auth)
         }
         NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
             endpoint.url,

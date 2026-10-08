@@ -45,22 +45,19 @@ class EmbeddedPushServiceTest {
     private val connections = mutableListOf<Pair<WebSocket, WebSocketListener>>()
     private val urls = mutableListOf<String>()
     private val endpoint = "https://ntfy.sh/up0123456789ab?up=1"
+    private val delegate = RecordingPushDelegate()
 
     @Before
     fun setup() {
-        PushDelegates.override(MatrixPushDelegate())
-        mockkObject(PushRenderWorker.Companion)
-        every { PushRenderWorker.enqueue(any(), any()) } returns Unit
+        PushDelegates.override(delegate)
         service = Robolectric.buildService(EmbeddedPushService::class.java).create().get()
         state = UnifiedPushStateStore(service)
-        state.showContent = true
         state.activeProvider = "embedded"
         state.endpoint = endpoint
         state.prepareEmbeddedReplay(endpoint, true)
         plugin = mockk(relaxed = true)
         every { plugin.onUnifiedPushMessage(any(), any()) } returns true
         NotificationPlugin.instance = plugin
-        PushDiagnostics.drain(service)
         val client = mockk<OkHttpClient>(relaxed = true)
         every { client.newWebSocket(any(), any()) } answers {
             val socket = mockk<WebSocket>(relaxed = true)
@@ -78,7 +75,6 @@ class EmbeddedPushServiceTest {
     fun teardown() {
         service.onDestroy()
         NotificationPlugin.instance = null
-        unmockkObject(PushRenderWorker.Companion)
         PushDelegates.override(null)
     }
 
@@ -110,13 +106,13 @@ class EmbeddedPushServiceTest {
         listener.onOpen(socket, mockk())
         shadowOf(Looper.getMainLooper()).idle()
         verify(exactly = 0) { plugin.onEmbeddedPushReady(any()) }
-        assertEquals(mapOf("EMBEDDED_STARTED" to 1), PushDiagnostics.drain(service).counts)
+        assertEquals(mapOf("EMBEDDED_STARTED" to 1), delegate.drain())
 
         frame(0, """{"event":"open","time":100}""")
 
         verify(exactly = 1) { plugin.onEmbeddedPushReady(endpoint) }
         assertEquals(listOf("https://ntfy.sh/up0123456789ab/ws?since=12h"), urls)
-        assertEquals(mapOf("EMBEDDED_READY" to 1), PushDiagnostics.drain(service).counts)
+        assertEquals(mapOf("EMBEDDED_READY" to 1), delegate.drain())
     }
 
     @Test
@@ -136,8 +132,8 @@ class EmbeddedPushServiceTest {
 
         finishWork()
         verify(exactly = 1) { plugin.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) }
-        verify(exactly = 1) { PushRenderWorker.enqueue(service, body) }
-        val counts = PushDiagnostics.drain(service).counts
+        assertEquals(listOf(body), delegate.scheduled)
+        val counts = delegate.drain()
         assertEquals(1, counts["EMBEDDED_MESSAGE_RECEIVED"])
         assertEquals(1, counts["EMBEDDED_DECRYPTED"])
     }
@@ -145,7 +141,7 @@ class EmbeddedPushServiceTest {
     @Test
     fun decryptsMatrixPushAndRendersAndroidNotification() {
         val body = deliverMatrixPush()
-        assertRenderedMatrixNotification()
+        assertEquals(listOf(body), delegate.rendered)
         verify(exactly = 1) { plugin.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE) }
     }
 
@@ -153,8 +149,8 @@ class EmbeddedPushServiceTest {
     fun decryptsMatrixPushAndRendersAndroidNotificationWithoutJsListener() {
         NotificationPlugin.instance = null
 
-        deliverMatrixPush("matrix-background-event")
-        assertRenderedMatrixNotification()
+        val body = deliverMatrixPush("matrix-background-event")
+        assertEquals(listOf(body), delegate.rendered)
     }
 
     private fun deliverMatrixPush(id: String = "matrix-event"): String {
@@ -183,15 +179,6 @@ class EmbeddedPushServiceTest {
         frame(0, """{"event":"message","id":"$id","time":200,"encoding":"base64","message":"$encoded"}""")
 
         return body
-    }
-
-    private fun assertRenderedMatrixNotification() {
-        val notificationId = UnifiedPushNotifier.roomNotificationId("@alice:example.org", "!room:example.org")
-        val manager = service.getSystemService(NotificationManager::class.java)
-        val notification = shadowOf(manager).getNotification(null, notificationId)
-        assertNotNull(notification)
-        assertTrue(notification!!.extras.getString(android.app.Notification.EXTRA_TITLE).orEmpty().contains("A room"))
-        assertTrue(notification.extras.getString(android.app.Notification.EXTRA_TEXT).orEmpty().contains("Hello from Matrix"))
     }
 
     private fun finishWork() {
@@ -305,17 +292,17 @@ class EmbeddedPushServiceTest {
         every { plugin.onUnifiedPushMessage(any(), any()) } returns true
         frame(0, message("A"))
         assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
-        verify(exactly = 1) { PushRenderWorker.enqueue(service, any()) }
+        assertEquals(1, delegate.scheduled.size)
     }
 
     @Test
     fun activationRemainsRetryableWhenWorkCannotBeQueued() {
-        every { PushRenderWorker.enqueue(any(), any()) } throws IllegalStateException("queue unavailable")
+        delegate.scheduleFailure = IllegalStateException("queue unavailable")
         start()
         frame(0, """{"event":"open","time":100}""")
         frame(0, message("A"))
         assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
-        every { PushRenderWorker.enqueue(any(), any()) } returns Unit
+        delegate.scheduleFailure = null
         frame(0, message("A"))
         assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
     }
@@ -450,11 +437,9 @@ class EmbeddedPushServiceTest {
         }
         val rendering = CountDownLatch(1)
         val release = CountDownLatch(1)
-        mockkObject(UnifiedPushNotifier)
-        every { UnifiedPushNotifier.showFromPush(any(), any()) } answers {
+        delegate.onRender = {
             rendering.countDown()
             release.await(5, TimeUnit.SECONDS)
-            Unit
         }
         try {
             val (socket, listener) = connections[0]
@@ -469,7 +454,6 @@ class EmbeddedPushServiceTest {
             assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
         } finally {
             release.countDown()
-            unmockkObject(UnifiedPushNotifier)
         }
     }
 
@@ -564,8 +548,8 @@ class EmbeddedPushServiceTest {
         start()
 
         assertEquals(2, connections.size)
-        assertEquals(1, PushDiagnostics.drain(service).counts["EMBEDDED_SOCKET_FAILED"])
-        assertEquals(emptyMap(), PushDiagnostics.drain(service).counts)
+        assertEquals(1, delegate.drain()["EMBEDDED_SOCKET_FAILED"])
+        assertEquals(emptyMap(), delegate.drain())
     }
 
     @Test

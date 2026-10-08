@@ -47,26 +47,6 @@ pub struct BatteryOptimizationResponse {
     pub ignoring: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PushHistoryEntry {
-    pub at: i64,
-    pub outcome: String,
-    #[serde(default)]
-    pub user_id: Option<String>,
-    #[serde(default)]
-    pub room_id: Option<String>,
-    #[serde(default)]
-    pub event_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PushHistory {
-    #[serde(default)]
-    pub entries: Vec<PushHistoryEntry>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushTransport {
@@ -74,17 +54,6 @@ pub struct PushTransport {
     pub provider: Option<String>,
     #[serde(default)]
     pub distributor: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PushDiagnostics {
-    #[serde(default)]
-    pub counts: HashMap<String, u32>,
-    #[serde(default)]
-    pub last_outcome: Option<String>,
-    #[serde(default)]
-    pub last_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

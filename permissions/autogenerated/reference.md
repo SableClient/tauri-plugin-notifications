@@ -160,32 +160,6 @@ Denies the check_permissions command without any pre-configured scope.
 <tr>
 <td>
 
-`notifications:allow-clear-push-history`
-
-</td>
-<td>
-
-Enables the clear_push_history command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-clear-push-history`
-
-</td>
-<td>
-
-Denies the clear_push_history command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `notifications:allow-create-channel`
 
 </td>
@@ -439,32 +413,6 @@ Enables the permission_state command without any pre-configured scope.
 <td>
 
 Denies the permission_state command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:allow-push-history`
-
-</td>
-<td>
-
-Enables the push_history command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-push-history`
-
-</td>
-<td>
-
-Denies the push_history command without any pre-configured scope.
 
 </td>
 </tr>
@@ -784,32 +732,6 @@ Denies the set_distributor command without any pre-configured scope.
 <tr>
 <td>
 
-`notifications:allow-set-encrypted-content-allowed`
-
-</td>
-<td>
-
-Enables the set_encrypted_content_allowed command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-set-encrypted-content-allowed`
-
-</td>
-<td>
-
-Denies the set_encrypted_content_allowed command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `notifications:allow-set-push-message-listener-active`
 
 </td>
@@ -881,32 +803,6 @@ Enables the show command without any pre-configured scope.
 <td>
 
 Denies the show command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:allow-take-push-diagnostics`
-
-</td>
-<td>
-
-Enables the take_push_diagnostics command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-take-push-diagnostics`
-
-</td>
-<td>
-
-Denies the take_push_diagnostics command without any pre-configured scope.
 
 </td>
 </tr>

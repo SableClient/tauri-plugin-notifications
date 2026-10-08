@@ -15,7 +15,6 @@ import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import android.os.Build.VERSION.SDK_INT
-import android.os.Bundle
 import android.os.UserManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -118,14 +117,7 @@ class TauriNotificationManager(
 
   private fun trigger(notificationManager: NotificationManagerCompat, notification: Notification): Int {
     cancelTimerForNotification(notification.id)
-    synchronized(PushNotificationGate) {
-      if (notification.schedule == null && NotificationReceipts.shouldDrop(context, notification.id,
-          notification.messages?.lastOrNull()?.eventId)) {
-        PushDiagnostics.record(context, PushOutcome.REPLAY_DROPPED)
-        return notification.id
-      }
-      buildNotification(notificationManager, notification)
-    }
+    buildNotification(notificationManager, notification)
 
     return notification.id
   }
@@ -155,10 +147,6 @@ class TauriNotificationManager(
     notificationManager: NotificationManagerCompat,
     notification: Notification,
   ) {
-    if (repeatsWhatIsShown(notification)) {
-      AlertLog.skipped(context, "app", traceOf(notification), "already-shown")
-      return
-    }
     val channelId = notification.channelId ?: DEFAULT_NOTIFICATION_CHANNEL_ID
     val mBuilder = NotificationCompat.Builder(
       context, channelId
@@ -169,17 +157,11 @@ class TauriNotificationManager(
       .setOngoing(notification.isOngoing)
       .setPriority(NotificationCompat.PRIORITY_DEFAULT)
       .setGroupSummary(notification.isGroupSummary)
-    notification.extra?.getString("user_id")?.let {
-      mBuilder.addExtras(Bundle().apply { putString(ConversationHistory.ACCOUNT_KEY, it) })
-    }
     val messages = notification.messages
     if (!messages.isNullOrEmpty()) {
       val style = buildMessagingStyle(notification, messages)
       mBuilder.setStyle(style)
       style.messages.lastOrNull()?.let { mBuilder.setWhen(it.timestamp) }
-      style.messages.lastOrNull()?.extras?.getString(ConversationHistory.EVENT_KEY)?.let {
-        notification.extra?.put("event_id", it)
-      }
     } else if (notification.largeBody != null) {
       // support multiline text
       mBuilder.setStyle(
@@ -234,49 +216,17 @@ class TauriNotificationManager(
       }
     }
     createActionIntents(notification, mBuilder)
-    // notificationId is a unique int for each notification that you must define
-    val latestEvent = notification.messages?.lastOrNull()?.eventId
-    val repeat = latestEvent != null && ConversationHistory.read(context, notification.id).any {
-      it.extras.getString(ConversationHistory.EVENT_KEY) == latestEvent
-    }
-    if (repeat) mBuilder.setSilent(true)
     val buildNotification = mBuilder.build()
     if (notification.schedule != null) {
       triggerScheduledNotification(buildNotification, notification)
     } else {
       notificationManager.notify(notification.id, buildNotification)
-      notification.messages?.forEach { NotificationReceipts.record(context, notification.id, it.eventId) }
-      AlertLog.posted(
-        context, "app", traceOf(notification), buildNotification,
-        listOfNotNull(
-          "silent".takeIf { notification.silent == true },
-          "repeat".takeIf { repeat },
-        ),
-      )
       try {
         NotificationPlugin.triggerNotification(notification)
       } catch (e: JSONException) {
         Logger.error(Logger.tags(TAG), "Failed to trigger notification event: ${e.message}", e)
       }
     }
-  }
-
-  private fun traceOf(notification: Notification) = PushTrace(
-    notification.extra?.getString("user_id").orEmpty(),
-    notification.extra?.getString("room_id").orEmpty(),
-    notification.messages?.lastOrNull()?.eventId.orEmpty(),
-  )
-
-  private fun displayedText(message: NotificationMessage): String {
-    val state = UnifiedPushStateStore(context)
-    val hidden = !state.showContent || (message.encrypted && !state.showEncryptedContent)
-    return if (hidden) "New message" else message.body
-  }
-
-  private fun repeatsWhatIsShown(notification: Notification): Boolean {
-    val messages = notification.messages
-    if (messages.isNullOrEmpty()) return false
-    return messages.all { ConversationHistory.shows(context, notification.id, it.eventId, displayedText(it)) }
   }
 
   /** Renders a conversation as MessagingStyle, the style Android expects for chat. */
@@ -292,24 +242,12 @@ class TauriNotificationManager(
     if (notification.isGroupConversation) {
       style.conversationTitle = notification.title
     }
-    val retained = if (messages.any { it.eventId != null }) {
-      ConversationHistory.read(context, notification.id).toMutableList()
-    } else mutableListOf()
     for (message in messages) {
       val sender = message.senderName?.let { name ->
         Person.Builder().setName(name).setKey(message.senderKey).build()
       }
-      val index = retained.indexOfFirst { message.eventId != null &&
-        it.extras.getString(ConversationHistory.EVENT_KEY) == message.eventId }
-      val incoming = NotificationCompat.MessagingStyle.Message(displayedText(message),
-        if (index >= 0) retained[index].timestamp else message.timestamp, sender).also {
-          if (index >= 0) it.extras.putAll(retained[index].extras)
-          it.extras.putString(ConversationHistory.EVENT_KEY, message.eventId)
-          it.extras.putBoolean(ConversationHistory.ENCRYPTED_KEY, message.encrypted)
-        }
-      if (index >= 0) retained[index] = incoming else retained.add(incoming)
+      style.addMessage(NotificationCompat.MessagingStyle.Message(message.body, message.timestamp, sender))
     }
-    retained.takeLast(ConversationHistory.LIMIT).forEach { style.addMessage(it) }
     return style
   }
 

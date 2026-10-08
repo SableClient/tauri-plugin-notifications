@@ -7,16 +7,16 @@ interface PushDelegate {
     fun isActivation(payload: String): Boolean
     fun render(context: Context, payload: String)
     fun schedule(context: Context, payload: String)
-    fun endpointChanged(context: Context)
-    fun cancelPending(context: Context)
+    fun endpointChanged(context: Context, endpoint: String, p256dh: String?, auth: String?)
+    fun record(context: Context, outcome: String)
 }
 
 object NoPushDelegate : PushDelegate {
     override fun isActivation(payload: String) = false
     override fun render(context: Context, payload: String) {}
     override fun schedule(context: Context, payload: String) {}
-    override fun endpointChanged(context: Context) {}
-    override fun cancelPending(context: Context) {}
+    override fun endpointChanged(context: Context, endpoint: String, p256dh: String?, auth: String?) {}
+    override fun record(context: Context, outcome: String) {}
 }
 
 object PushDelegates {

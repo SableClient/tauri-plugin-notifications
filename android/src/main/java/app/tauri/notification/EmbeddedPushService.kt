@@ -103,7 +103,7 @@ class EmbeddedPushService : Service() {
         val nextSubscription = Subscription(nextEndpoint!!, state.pushUserId, state.pushDeviceId)
         if (activeSubscription != nextSubscription) {
             activeSubscription = nextSubscription
-            PushDiagnostics.record(this, PushOutcome.EMBEDDED_STARTED)
+            PushDelegates.get(this).record(this, "EMBEDDED_STARTED")
             cancelReconnect()
             socket?.cancel()
             socket = null
@@ -200,7 +200,7 @@ class EmbeddedPushService : Service() {
                 handler.post { inFlight.remove(key) }
                 return@execute
             }
-            PushDiagnostics.record(this, PushOutcome.EMBEDDED_DECRYPTED)
+            PushDelegates.get(this).record(this, "EMBEDDED_DECRYPTED")
             val delegate = PushDelegates.get(this)
             val activation = delegate.isActivation(body)
             try {
@@ -253,7 +253,7 @@ class EmbeddedPushService : Service() {
                                 Log.i(TAG, "Push gateway subscription ready")
                                 releaseWakeLock()
                                 EmbeddedPushAlarm.schedule(this@EmbeddedPushService, HEARTBEAT_MS)
-                                PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_READY)
+                                PushDelegates.get(this@EmbeddedPushService).record(this@EmbeddedPushService, "EMBEDDED_READY")
                                 ready = true
                                 retryDelay = BASE_BACKOFF_MS
                                 NotificationPlugin.instance?.onEmbeddedPushReady(owner.endpoint)
@@ -263,7 +263,7 @@ class EmbeddedPushService : Service() {
                         }
                     }
                     "message" -> {
-                        PushDiagnostics.record(this@EmbeddedPushService, PushOutcome.EMBEDDED_MESSAGE_RECEIVED)
+                        PushDelegates.get(this@EmbeddedPushService).record(this@EmbeddedPushService, "EMBEDDED_MESSAGE_RECEIVED")
                         if (ready) processMessage(owner, text, json) else pending.add(text to json)
                     }
                 }
@@ -271,7 +271,7 @@ class EmbeddedPushService : Service() {
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            disconnected(webSocket, if (response != null) PushOutcome.EMBEDDED_HTTP_REJECTED else PushOutcome.EMBEDDED_SOCKET_FAILED)
+            disconnected(webSocket, if (response != null) "EMBEDDED_HTTP_REJECTED" else "EMBEDDED_SOCKET_FAILED")
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -279,13 +279,13 @@ class EmbeddedPushService : Service() {
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            disconnected(webSocket, PushOutcome.EMBEDDED_CLOSED)
+            disconnected(webSocket, "EMBEDDED_CLOSED")
         }
 
-        private fun disconnected(webSocket: WebSocket, outcome: PushOutcome) {
+        private fun disconnected(webSocket: WebSocket, outcome: String) {
             handler.post {
                 if (closing || socket !== webSocket) return@post
-                PushDiagnostics.record(this@EmbeddedPushService, outcome)
+                PushDelegates.get(this@EmbeddedPushService).record(this@EmbeddedPushService, outcome)
                 socket = null
                 ready = false
                 scheduleReconnect()
@@ -300,7 +300,7 @@ class EmbeddedPushService : Service() {
         // A plaintext relay is used for testing; not a failure worth logging.
         if (sealed.isNotEmpty() && sealed[0] == '{'.code.toByte()) return String(sealed)
 
-        PushDiagnostics.record(this, PushOutcome.EMBEDDED_DECRYPT_FAILED)
+        PushDelegates.get(this).record(this, "EMBEDDED_DECRYPT_FAILED")
         Log.w(TAG, "Could not decrypt the push body")
         return null
     }

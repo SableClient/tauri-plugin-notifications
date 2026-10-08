@@ -770,27 +770,14 @@ The plugin does **not** install this file for you — it's a packaging/deploymen
 
 [MIT](LICENSE)
 
-### Android Matrix push integration (Sable v1 and v2)
+### Android push delegate
 
-Await asynchronous mobile Rust calls, including `set_encrypted_content_allowed`
-and `take_push_diagnostics`. Synchronous calls can deadlock page-load callbacks
-while Tauri holds its plugin-store lock.
-
-Payloads may be flat or wrapped in `notification` as an object or JSON string.
-Include recipient `user_id` in the envelope, notification, or
-`devices[].data.user_id` / `devices[].data.default_payload.user_id` (ntfy).
-Conflicting recipients are
-rejected; the open UI account is never a fallback.
-
-Roomless updates are not displayed; zero unread clears the room alert. Encrypted
-messages start generic. Host JNI decryption silently updates current alerts only
-when both general and encrypted previews are enabled. Missing keys/decryptor keep
-the generic preview. Decryption never uses another account's registration.
-
-Each conversation retains eight visible messages. Hashes of the last 2,048 handled
-events suppress replays after dismissal/trimming; older events are not covered.
-The replay store contains no message text. Read/reply target the newest retained message,
-regardless of decryption order.
+The plugin delivers a push; it does not render one. `UnifiedPushReceiver`,
+`EmbeddedPushService` and the FCM service hand every raw payload to the
+`PushDelegate` named by the `app.tauri.notification.PUSH_DELEGATE` manifest
+meta-data, and a build with none does nothing with it. The delegate parses,
+decrypts, deduplicates and posts, and receives endpoint changes through
+`endpointChanged`. Transport events are reported through `record`.
 
 Registration results need different server routes:
 
@@ -803,9 +790,8 @@ Do not register a plain ntfy endpoint as an FCM token. Persist/re-register the
 pusher on startup and update it when the endpoint changes. Android force-stop
 prevents background delivery until the user opens the app again.
 
-Run the renderer and integration regressions with `cd android && ./gradlew
-:testDebugUnitTest --tests app.tauri.notification.UnifiedPushNotifierTest` (after
-Tauri's Android bindings have been generated).
+Run the transport tests with `cd android && ./gradlew testGmsDebugUnitTest
+testFossDebugUnitTest` (after Tauri's Android bindings have been generated).
 
 ### iOS Matrix push integration
 

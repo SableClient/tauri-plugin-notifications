@@ -94,22 +94,6 @@ class SetPushMessageListenerActiveArgs {
 }
 
 @InvokeArg
-class SetEncryptedContentAllowedArgs {
-  var allowed: Boolean = false
-}
-
-@InvokeArg
-class PushAccountArgs {
-  var userId: String? = null
-  var deviceId: String? = null
-}
-
-@InvokeArg
-class SetPushAccountsArgs {
-  var accounts: List<PushAccountArgs> = emptyList()
-}
-
-@InvokeArg
 class DistributorArgs {
   var distributor: String? = null
 }
@@ -411,18 +395,14 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val args = invoke.parseArgs(RemoveActiveArgs::class.java)
 
     if (args.notifications.isEmpty()) {
-      PushDelegates.get(activity).cancelPending(activity)
-      PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
+      notificationManager.cancelAll()
       invoke.resolve()
     } else {
       for (notification in args.notifications) {
-        androidx.work.WorkManager.getInstance(activity).cancelAllWorkByTag("push-room:${notification.id}")
-        PushNotificationGate.dismiss(activity, notification.id) {
-          if (notification.tag == null) {
-            notificationManager.cancel(notification.id)
-          } else {
-            notificationManager.cancel(notification.tag, notification.id)
-          }
+        if (notification.tag == null) {
+          notificationManager.cancel(notification.id)
+        } else {
+          notificationManager.cancel(notification.tag, notification.id)
         }
       }
       invoke.resolve()
@@ -517,7 +497,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val device = args.deviceId?.takeIf { it.isNotEmpty() }
     if (user != null) unifiedPushState.pushUserId = user
     if (device != null) unifiedPushState.pushDeviceId = device
-    unifiedPushState.rememberAccount(user, device)
 
     pendingPushRegistration = PushRegistration(
       requestedVapid,
@@ -747,8 +726,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       it.phase == PushRegistrationPhase.UNIFIED_PUSH || it.phase == PushRegistrationPhase.DISTRIBUTOR
     }
     val instanceToUnregister = pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE
-    PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
-    unifiedPushState.pushAccounts = emptyMap()
+    notificationManager.cancelAll()
     finishPushRegistrationError("Push registration cancelled by unregister", restoreEmbeddedRegistration = false)
     EmbeddedPushService.stop(activity)
 
@@ -1022,7 +1000,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
           retireUnifiedPush(registration.instance)
         }
         if (registration.phase == PushRegistrationPhase.EMBEDDED) {
-          PushDiagnostics.record(activity, PushOutcome.EMBEDDED_REGISTRATION_TIMEOUT)
+          PushDelegates.get(activity).record(activity, "EMBEDDED_REGISTRATION_TIMEOUT")
         }
         finishPushRegistrationError("Timed out registering for push notifications")
       }
@@ -1148,45 +1126,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     invoke.resolve()
   }
 
-  /**
-   * The signed-in accounts, so a cold push for one the app is not showing still
-   * renders and decrypts. The app owns the list: an account it drops here stops
-   * being recognised.
-   */
-  @Command
-  fun setPushAccounts(invoke: Invoke) {
-    val args = invoke.parseArgs(SetPushAccountsArgs::class.java)
-    unifiedPushState.pushAccounts = args.accounts.mapNotNull { account ->
-      val user = account.userId?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-      val device = account.deviceId?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-      user to device
-    }.toMap()
-    invoke.resolve()
-  }
-
-  /** The cold path posts notifications without the webview, so it needs the setting too. */
-  @Command
-  fun setEncryptedContentAllowed(invoke: Invoke) {
-    val args = invoke.parseArgs(SetEncryptedContentAllowedArgs::class.java)
-    unifiedPushState.showEncryptedContent = args.allowed
-    invoke.resolve()
-  }
-
-  @Command
-  fun setPushPolicy(invoke: Invoke) {
-    val args = invoke.parseArgs(PushPolicyArgs::class.java)
-    unifiedPushState.notificationsEnabled = args.enabled
-    unifiedPushState.showContent = args.content
-    unifiedPushState.showEncryptedContent = args.encryptedContent
-    unifiedPushState.notificationSounds = args.sounds
-    unifiedPushState.notifyOnce = args.notifyOnce
-    if (!args.enabled || !args.content) {
-      PushDelegates.get(activity).cancelPending(activity)
-      PushNotificationGate.dismiss(activity, null) { notificationManager.cancelAll() }
-    }
-    invoke.resolve()
-  }
-
   @Command
   fun isIgnoringBatteryOptimizations(invoke: Invoke) {
     val manager = activity.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -1209,19 +1148,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   }
 
   @Command
-  fun pushHistory(invoke: Invoke) {
-    val data = JSObject()
-    data.put("entries", PushDiagnostics.history(activity.applicationContext))
-    invoke.resolve(data)
-  }
-
-  @Command
-  fun clearPushHistory(invoke: Invoke) {
-    PushDiagnostics.clearHistory(activity.applicationContext)
-    invoke.resolve()
-  }
-
-  @Command
   fun pushTransport(invoke: Invoke) {
     val provider = unifiedPushState.activeProvider
     val data = JSObject()
@@ -1232,21 +1158,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       else -> null
     }
     distributor?.let { data.put("distributor", it) }
-    invoke.resolve(data)
-  }
-
-  @Command
-  fun takePushDiagnostics(invoke: Invoke) {
-    val snapshot = PushDiagnostics.drain(activity.applicationContext)
-
-    val counts = JSObject()
-    snapshot.counts.forEach { (outcome, count) -> counts.put(outcome, count) }
-
-    val data = JSObject()
-    data.put("counts", counts)
-    snapshot.lastOutcome?.let { data.put("lastOutcome", it) }
-    data.put("lastAt", snapshot.lastAt)
-
     invoke.resolve(data)
   }
 }

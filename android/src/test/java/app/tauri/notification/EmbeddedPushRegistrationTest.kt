@@ -35,6 +35,7 @@ import org.robolectric.annotation.Config
 class EmbeddedPushRegistrationTest {
     private lateinit var plugin: NotificationPlugin
     private lateinit var state: UnifiedPushStateStore
+    private val delegate = RecordingPushDelegate()
     private lateinit var invoke: Invoke
 
     @Before
@@ -47,7 +48,7 @@ class EmbeddedPushRegistrationTest {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         state = UnifiedPushStateStore(activity)
         state.useEmbeddedDistributor = true
-        PushDiagnostics.drain(activity)
+        PushDelegates.override(delegate)
         plugin = spyk(NotificationPlugin(activity))
         NotificationPlugin::class.java.getDeclaredField("notificationManager").apply {
             isAccessible = true
@@ -69,6 +70,7 @@ class EmbeddedPushRegistrationTest {
 
     @After
     fun teardown() {
+        PushDelegates.override(null)
         if (::plugin.isInitialized) plugin.onWebViewGone()
         unmockkObject(CachedKeyManager.Companion)
     }
@@ -111,7 +113,7 @@ class EmbeddedPushRegistrationTest {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
         plugin.onEmbeddedPushReady(endpoint)
 
-        assertEquals(1, PushDiagnostics.drain(org.robolectric.RuntimeEnvironment.getApplication()).counts["EMBEDDED_REGISTRATION_TIMEOUT"])
+        assertEquals(1, delegate.drain()["EMBEDDED_REGISTRATION_TIMEOUT"])
         verify(exactly = 1) { invoke.reject("Timed out registering for push notifications") }
         verify(exactly = 0) { invoke.resolve(any<JSObject>()) }
         assertEquals(null, state.activeProvider)

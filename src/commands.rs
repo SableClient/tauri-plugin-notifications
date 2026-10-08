@@ -6,7 +6,7 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime, State, command, plugin::PermissionState};
 
-use crate::models::{PushDiagnostics, PushHistory, PushTransport};
+use crate::models::PushTransport;
 use crate::{NotificationData, Notifications, Result};
 
 #[derive(Debug, Deserialize)]
@@ -192,18 +192,6 @@ pub async fn set_push_message_listener_active<R: Runtime>(
 }
 
 #[command]
-pub async fn set_encrypted_content_allowed<R: Runtime>(
-    _app: AppHandle<R>,
-    notification: State<'_, Notifications<R>>,
-    allowed: bool,
-) -> Result<()> {
-    #[cfg(mobile)]
-    return notification.set_encrypted_content_allowed(allowed).await;
-    #[cfg(desktop)]
-    return notification.set_encrypted_content_allowed(allowed);
-}
-
-#[command]
 pub async fn is_ignoring_battery_optimizations<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
@@ -226,28 +214,6 @@ pub async fn request_ignore_battery_optimizations<R: Runtime>(
 }
 
 #[command]
-pub async fn push_history<R: Runtime>(
-    _app: AppHandle<R>,
-    notification: State<'_, Notifications<R>>,
-) -> Result<PushHistory> {
-    #[cfg(mobile)]
-    return notification.push_history().await;
-    #[cfg(desktop)]
-    return notification.push_history();
-}
-
-#[command]
-pub async fn clear_push_history<R: Runtime>(
-    _app: AppHandle<R>,
-    notification: State<'_, Notifications<R>>,
-) -> Result<()> {
-    #[cfg(mobile)]
-    return notification.clear_push_history().await;
-    #[cfg(desktop)]
-    return notification.clear_push_history();
-}
-
-#[command]
 pub async fn push_transport<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
@@ -256,17 +222,6 @@ pub async fn push_transport<R: Runtime>(
     return notification.push_transport().await;
     #[cfg(desktop)]
     return notification.push_transport();
-}
-
-#[command]
-pub async fn take_push_diagnostics<R: Runtime>(
-    _app: AppHandle<R>,
-    notification: State<'_, Notifications<R>>,
-) -> Result<PushDiagnostics> {
-    #[cfg(mobile)]
-    return notification.take_push_diagnostics().await;
-    #[cfg(desktop)]
-    return notification.take_push_diagnostics();
 }
 
 #[command]

@@ -9,7 +9,7 @@ use tauri::{
 
 use crate::models::{
     ActionType, ActiveNotification, Channel, PendingNotification, PermissionResponse,
-    PushDiagnostics, PushNotificationResponse,
+    PushNotificationResponse,
 };
 
 use std::collections::HashMap;
@@ -307,70 +307,6 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
-    pub async fn set_encrypted_content_allowed(&self, allowed: bool) -> crate::Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            let mut args = HashMap::new();
-            args.insert("allowed", allowed);
-            self.0
-                .run_mobile_plugin_async::<()>("setEncryptedContentAllowed", args)
-                .await
-                .map_err(Into::into)
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = allowed;
-            Ok(())
-        }
-    }
-
-    /// The signed-in accounts a cold push may address. The one endpoint serves
-    /// every account, so the active one is not the only recipient to accept.
-    pub async fn set_push_accounts(&self, accounts: Vec<(String, String)>) -> crate::Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            let accounts = accounts
-                .into_iter()
-                .map(|(user_id, device_id)| {
-                    serde_json::json!({ "userId": user_id, "deviceId": device_id })
-                })
-                .collect::<Vec<_>>();
-            return self
-                .0
-                .run_mobile_plugin_async::<()>(
-                    "setPushAccounts",
-                    serde_json::json!({ "accounts": accounts }),
-                )
-                .await
-                .map_err(Into::into);
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = accounts;
-            Ok(())
-        }
-    }
-
-    pub async fn set_push_policy(
-        &self,
-        enabled: bool,
-        content: bool,
-        encrypted_content: bool,
-        sounds: bool,
-        notify_once: bool,
-    ) -> crate::Result<()> {
-        #[cfg(target_os = "android")]
-        return self.0.run_mobile_plugin_async::<()>("setPushPolicy", serde_json::json!({
-            "enabled": enabled, "content": content, "encryptedContent": encrypted_content, "sounds": sounds,
-            "notifyOnce": notify_once
-        })).await.map_err(Into::into);
-        #[cfg(target_os = "ios")]
-        {
-            let _ = (enabled, content, encrypted_content, sounds, notify_once);
-            Ok(())
-        }
-    }
-
     pub async fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
         #[cfg(all(target_os = "android", feature = "push-notifications"))]
         {
@@ -403,34 +339,6 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
-    pub async fn push_history(&self) -> crate::Result<crate::models::PushHistory> {
-        #[cfg(target_os = "android")]
-        {
-            self.0
-                .run_mobile_plugin_async("pushHistory", ())
-                .await
-                .map_err(Into::into)
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            Ok(crate::models::PushHistory::default())
-        }
-    }
-
-    pub async fn clear_push_history(&self) -> crate::Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            self.0
-                .run_mobile_plugin_async("clearPushHistory", ())
-                .await
-                .map_err(Into::into)
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            Ok(())
-        }
-    }
-
     pub async fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
         #[cfg(target_os = "android")]
         {
@@ -445,17 +353,4 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
-    pub async fn take_push_diagnostics(&self) -> crate::Result<PushDiagnostics> {
-        #[cfg(target_os = "android")]
-        {
-            self.0
-                .run_mobile_plugin_async("takePushDiagnostics", ())
-                .await
-                .map_err(Into::into)
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            Ok(PushDiagnostics::default())
-        }
-    }
 }

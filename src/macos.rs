@@ -331,11 +331,6 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
-    /// No cold-path notifications on macOS, so there is nothing to mirror.
-    pub const fn set_encrypted_content_allowed(&self, _allowed: bool) -> crate::Result<()> {
-        Ok(())
-    }
-
     #[allow(clippy::unused_self)]
     pub fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
         Ok(true)
@@ -343,10 +338,6 @@ impl<R: Runtime> Notifications<R> {
 
     pub fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
         Ok(())
-    }
-
-    pub fn take_push_diagnostics(&self) -> crate::Result<crate::models::PushDiagnostics> {
-        Ok(crate::models::PushDiagnostics::default())
     }
 
     /// Create a notification channel (not supported on macOS).

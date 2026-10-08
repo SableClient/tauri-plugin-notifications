@@ -57,7 +57,7 @@ internal object EmbeddedPushAlarm {
             EmbeddedPushService.start(context)
         } catch (error: Exception) {
             Log.w(TAG, "Could not restart the push service from an alarm: ${error.message}")
-            PushDiagnostics.record(context, PushOutcome.EMBEDDED_SOCKET_FAILED)
+            PushDelegates.get(context).record(context, "EMBEDDED_SOCKET_FAILED")
         }
     }
 }
