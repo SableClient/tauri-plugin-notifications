@@ -40,6 +40,10 @@ pub struct WindowsConfig {
     /// and `<com:Class Id>` entries. Accepts the `xxxxxxxx-xxxx-...` form
     /// with or without surrounding braces.
     pub toast_activator_clsid: Option<String>,
+    /// Unpackaged apps: register the COM activator in `HKCU` so Action Center
+    /// and cold-start clicks reach the app. The CLSID is
+    /// `toast_activator_clsid`, or derived from the identifier.
+    pub register_unpackaged_activator: bool,
 }
 
 pub use models::*;

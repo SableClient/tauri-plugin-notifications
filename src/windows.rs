@@ -21,10 +21,14 @@ use windows::UI::Notifications::{
     NotificationSetting, ScheduledToastNotification, ToastActivatedEventArgs, ToastNotification,
     ToastNotificationManager, ToastNotifier,
 };
-use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_INVALIDARG, S_FALSE, S_OK};
+use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, S_FALSE, S_OK};
 use windows::Win32::System::Com::{
     CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoInitializeEx, CoRegisterClassObject,
     IClassFactory, IClassFactory_Impl, REGCLS_MULTIPLEUSE,
+};
+use windows::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
+    RegCreateKeyExW, RegSetValueExW,
 };
 use windows::Win32::UI::Notifications::{
     INotificationActivationCallback, INotificationActivationCallback_Impl,
@@ -156,6 +160,7 @@ pub struct WindowsPlugin {
     app_id: String,
     packaged: bool,
     notifier: ToastNotifier,
+    focus: Box<dyn Fn() + Send + Sync>,
     action_types: RwLock<HashMap<String, ActionType>>,
     click_listener_active: RwLock<bool>,
     action_listener_active: RwLock<bool>,
@@ -165,9 +170,8 @@ pub struct WindowsPlugin {
     pending_clicks: RwLock<Vec<serde_json::Value>>,
     /// `CoRegisterClassObject` cookie. Kept for the process lifetime — no
     /// explicit `CoRevokeClassObject` on shutdown; the OS reclaims it on exit.
-    /// `None` when COM activator wasn't registered (unpackaged or no CLSID in
-    /// config).
-    _com_cookie: RwLock<Option<u32>>,
+    /// `None` when no COM activator was registered.
+    com_cookie: RwLock<Option<u32>>,
     #[cfg(feature = "push-notifications")]
     push_channel: RwLock<Option<PushNotificationChannel>>,
 }
@@ -290,6 +294,9 @@ impl INotificationActivationCallback_Impl for ToastActivator_Impl {
         let _ = crate::listeners::trigger("actionPerformed", decoded.action.to_string());
 
         if let Some(click_payload) = decoded.click {
+            if let Some(plugin) = self.plugin.upgrade() {
+                (plugin.focus)();
+            }
             // Deliver live OR buffer — never both. Buffering when a listener is
             // already subscribed causes duplicate events on the next re-subscribe
             // (hot reload, route change).
@@ -357,6 +364,11 @@ impl WindowsPlugin {
             .write()
             .map_err(|_| crate::Error::Io(std::io::Error::other("Lock poisoned")))? = active;
         Ok(())
+    }
+
+    /// The COM activator receives every activation, the popup's included.
+    fn has_com_activator(&self) -> bool {
+        self.com_cookie.read().is_ok_and(|cookie| cookie.is_some())
     }
 
     fn is_action_listener_active(&self) -> crate::Result<bool> {
@@ -448,40 +460,57 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 ) -> crate::Result<Notifications<R>> {
     let app_id = app.config().identifier.clone();
     let packaged = is_packaged();
+    let activator_clsid = if packaged {
+        windows_config.toast_activator_clsid
+    } else if windows_config.register_unpackaged_activator {
+        match register_unpackaged_activation(
+            app,
+            &app_id,
+            windows_config.toast_activator_clsid.as_deref(),
+        ) {
+            Ok(clsid) => Some(clsid),
+            Err(e) => {
+                log::error!("Failed to register the unpackaged toast activation: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let notifier = if packaged {
         ToastNotificationManager::CreateToastNotifier()?
     } else {
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(&app_id))?
     };
 
+    let focus_handle = app.clone();
     let plugin = Arc::new(WindowsPlugin {
         app_id,
         packaged,
         notifier,
+        focus: Box::new(move || focus_app(&focus_handle)),
         action_types: RwLock::new(HashMap::new()),
         click_listener_active: RwLock::new(false),
         action_listener_active: RwLock::new(false),
         pending_clicks: RwLock::new(Vec::new()),
-        _com_cookie: RwLock::new(None),
+        com_cookie: RwLock::new(None),
         #[cfg(feature = "push-notifications")]
         push_channel: RwLock::new(None),
     });
 
-    if packaged {
-        if let Some(clsid_str) = windows_config.toast_activator_clsid.as_deref() {
-            match register_toast_activator(&plugin, clsid_str) {
-                Ok(cookie) => {
-                    if let Ok(mut slot) = plugin._com_cookie.write() {
-                        *slot = Some(cookie);
-                    }
-                    log::info!("Toast activator registered (clsid={clsid_str}, cookie={cookie})");
+    if let Some(clsid_str) = activator_clsid.as_deref() {
+        match register_toast_activator(&plugin, clsid_str) {
+            Ok(cookie) => {
+                if let Ok(mut slot) = plugin.com_cookie.write() {
+                    *slot = Some(cookie);
                 }
-                Err(e) => {
-                    log::error!(
-                        "Failed to register toast activator (clsid={clsid_str}): {e}; \
-                         Action Center clicks will fall back to shortcut launch without payload"
-                    );
-                }
+                log::info!("Toast activator registered (clsid={clsid_str}, cookie={cookie})");
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to register toast activator (clsid={clsid_str}): {e}; \
+                     Action Center clicks will fall back to shortcut launch without payload"
+                );
             }
         }
     }
@@ -490,6 +519,81 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
         app: app.clone(),
         plugin,
     })
+}
+
+const ACTIVATION_ARGUMENT: &str = "-ToastActivated";
+
+const ACTIVATOR_NAMESPACE: uuid::Uuid =
+    uuid::Uuid::from_u128(0x3c8f_2b1e_6d4a_4f7e_9a51_0e7c_d2b4_8f63);
+
+/// The registration Windows App SDK's `AppNotificationManager::Register`
+/// writes for an unpackaged app.
+fn register_unpackaged_activation<R: Runtime>(
+    app: &AppHandle<R>,
+    app_id: &str,
+    configured_clsid: Option<&str>,
+) -> windows::core::Result<String> {
+    let clsid = configured_clsid.map_or_else(
+        || uuid::Uuid::new_v5(&ACTIVATOR_NAMESPACE, app_id.as_bytes()).to_string(),
+        |clsid| clsid.trim_matches(['{', '}']).to_owned(),
+    );
+    let braced = format!("{{{clsid}}}");
+    let exe =
+        std::env::current_exe().map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
+    let display_name = app
+        .config()
+        .product_name
+        .clone()
+        .unwrap_or_else(|| app_id.to_owned());
+
+    let app_key = format!(r"Software\Classes\AppUserModelId\{app_id}");
+    set_user_registry_string(&app_key, Some("DisplayName"), &display_name)?;
+    set_user_registry_string(&app_key, Some("CustomActivator"), &braced)?;
+    set_user_registry_string(
+        &format!(r"Software\Classes\CLSID\{braced}\LocalServer32"),
+        None,
+        &format!("\"{}\" {ACTIVATION_ARGUMENT}", exe.display()),
+    )?;
+    Ok(clsid)
+}
+
+fn set_user_registry_string(
+    subkey: &str,
+    name: Option<&str>,
+    value: &str,
+) -> windows::core::Result<()> {
+    let mut key = HKEY::default();
+    unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            &HSTRING::from(subkey),
+            None,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &raw mut key,
+            None,
+        )
+    }
+    .ok()?;
+    let wide: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    let bytes: Vec<u8> = wide.iter().flat_map(|unit| unit.to_le_bytes()).collect();
+    let name = name.map(HSTRING::from);
+    let written = unsafe {
+        RegSetValueExW(
+            key,
+            name.as_ref()
+                .map_or(PCWSTR::null(), |name| PCWSTR(name.as_ptr())),
+            None,
+            REG_SZ,
+            Some(&bytes),
+        )
+    };
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    written.ok()
 }
 
 /// Initialize COM for the current thread (apartment-threaded) and register a
@@ -680,7 +784,7 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                 toast.SetGroup(g)?;
             }
 
-            if self.plugin.is_activation_listener_active()? {
+            if self.plugin.is_activation_listener_active()? && !self.plugin.has_com_activator() {
                 let notification = ActiveNotification {
                     id: self.data.id,
                     tag: Some(self.data.id.to_string()),
@@ -695,7 +799,7 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                     schedule: self.data.schedule.clone(),
                     sound: self.data.sound.clone(),
                 };
-                let app = self.app.clone();
+                let plugin = self.plugin.clone();
 
                 toast.Activated(&TypedEventHandler::new(
                     move |_: windows::core::Ref<'_, ToastNotification>,
@@ -736,7 +840,7 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                                 }
 
                                 if is_tap {
-                                    focus_app(&app);
+                                    (plugin.focus)();
                                     let click_payload = serde_json::json!({
                                         "id": notification.id,
                                         "data": notification.extra,

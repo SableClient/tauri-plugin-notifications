@@ -56,7 +56,9 @@ windows = { version = "0.61", features = [
     "Networking_PushNotifications",
     "UI_Notifications",
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_System_Com",
+    "Win32_System_Registry",
     "Win32_UI_Notifications",
 ] }
 # The `#[implement]` macro from `windows::core::implement` emits `::windows_core::*`
@@ -64,8 +66,9 @@ windows = { version = "0.61", features = [
 # transitive through `windows`.
 windows-core = "0.61"
 # Used to parse user-supplied CLSID strings (accepts braced, unbraced, and
-# hyphen-less forms) before converting to `windows::core::GUID` via raw bits.
-uuid = { version = "1", default-features = false }
+# hyphen-less forms) before converting to `windows::core::GUID` via raw bits,
+# and to derive an unpackaged app's activator CLSID from its identifier.
+uuid = { version = "1", default-features = false, features = ["v5"] }
 nt-time = "0.15"
 
 [build-dependencies]
