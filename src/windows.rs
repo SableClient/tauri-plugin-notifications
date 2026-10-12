@@ -49,6 +49,15 @@ fn is_packaged() -> bool {
     Package::Current().is_ok()
 }
 
+/// A foreground tap raises the app, as on Linux; `WinRT` only activates it.
+fn focus_app<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.webview_windows().into_values().next() {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// Resolve a user-supplied image string into a URI scheme Windows toast
 /// notifications can actually load.
 ///
@@ -686,6 +695,7 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                     schedule: self.data.schedule.clone(),
                     sound: self.data.sound.clone(),
                 };
+                let app = self.app.clone();
 
                 toast.Activated(&TypedEventHandler::new(
                     move |_: windows::core::Ref<'_, ToastNotification>,
@@ -726,6 +736,7 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                                 }
 
                                 if is_tap {
+                                    focus_app(&app);
                                     let click_payload = serde_json::json!({
                                         "id": notification.id,
                                         "data": notification.extra,
@@ -1068,6 +1079,11 @@ impl<R: Runtime> Notifications<R> {
     #[allow(clippy::unused_self)]
     pub fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
         Ok(true)
+    }
+
+    #[allow(clippy::unused_self)]
+    pub fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
+        Ok(crate::models::PushTransport::default())
     }
 
     pub fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
