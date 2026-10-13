@@ -234,5 +234,15 @@ fn swift_library_static_lib_dir() -> PathBuf {
     };
 
     let arch_dir = format!("{}-apple-macosx", swift_arch());
-    swift_build_dir().join(format!("{arch_dir}/{debug_or_release}"))
+    let legacy_dir = swift_build_dir().join(format!("{arch_dir}/{debug_or_release}"));
+    if legacy_dir.join("libtauri-plugin-notifications.a").exists() {
+        return legacy_dir;
+    }
+
+    let product_config = if is_release_build() {
+        "Release"
+    } else {
+        "Debug"
+    };
+    swift_build_dir().join("out/Products").join(product_config)
 }
