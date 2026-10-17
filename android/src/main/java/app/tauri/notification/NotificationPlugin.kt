@@ -132,6 +132,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val generation: Long,
     var timeout: Runnable? = null,
     var embeddedPreviousRegistration: UnifiedPushStateStore.Registration? = null,
+    val renewsActive: Boolean = false,
   )
 
   private enum class PushRegistrationPhase { PERMISSION, DISTRIBUTOR, UNIFIED_PUSH, FCM, EMBEDDED }
@@ -498,15 +499,17 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     if (user != null) unifiedPushState.pushUserId = user
     if (device != null) unifiedPushState.pushDeviceId = device
 
+    val instance = unifiedPushState.instanceForRegistration()
     pendingPushRegistration = PushRegistration(
       requestedVapid,
       provider,
       args.embeddedGatewayUrl,
-      unifiedPushState.instanceForRegistration(),
+      instance,
       distributor,
       PushRegistrationPhase.PERMISSION,
       invoke,
-      ++unifiedPushGeneration
+      ++unifiedPushGeneration,
+      renewsActive = unifiedPushState.endpoint != null && unifiedPushState.acceptsUnifiedPush(instance),
     )
     schedulePushRegistrationTimeout()
 
@@ -996,7 +999,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val registration = pendingPushRegistration ?: return
     val timeout = Runnable {
       if (pendingPushRegistration === registration) {
-        if (registration.phase == PushRegistrationPhase.UNIFIED_PUSH || registration.phase == PushRegistrationPhase.DISTRIBUTOR) {
+        if (!registration.renewsActive &&
+          (registration.phase == PushRegistrationPhase.UNIFIED_PUSH || registration.phase == PushRegistrationPhase.DISTRIBUTOR)
+        ) {
           retireUnifiedPush(registration.instance)
         }
         if (registration.phase == PushRegistrationPhase.EMBEDDED) {
