@@ -97,15 +97,17 @@ class UnifiedPushRegistrationTimeoutTest {
     }
 
     @Test
-    fun aFirstRegistrationThatTimesOutIsRetired() {
-        state.activeProvider = "unifiedpush"
-        state.activeInstance = UnifiedPushStateStore.INSTANCE
-
+    fun aFirstRegistrationThatTimesOutStillTakesAnEndpointThatArrivesLate() {
         plugin.registerForPushNotifications(invoke)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(30))
 
         verify(exactly = 1) { invoke.reject("Timed out registering for push notifications") }
-        assertEquals(null, state.activeProvider)
         assertEquals(null, state.endpoint)
+
+        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/uplate?up=1", "p256dh", "auth", UnifiedPushStateStore.INSTANCE)
+
+        assertEquals("https://ntfy.sh/uplate?up=1", state.endpoint)
+        assertEquals("unifiedpush", state.activeProvider)
+        verify { plugin.trigger("push-token", match<JSObject> { it.getBoolean("rotated") == true }) }
     }
 }

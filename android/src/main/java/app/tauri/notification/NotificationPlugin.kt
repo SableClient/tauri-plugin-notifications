@@ -999,9 +999,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val registration = pendingPushRegistration ?: return
     val timeout = Runnable {
       if (pendingPushRegistration === registration) {
-        if (!registration.renewsActive &&
-          (registration.phase == PushRegistrationPhase.UNIFIED_PUSH || registration.phase == PushRegistrationPhase.DISTRIBUTOR)
-        ) {
+        if (!registration.renewsActive && registration.phase == PushRegistrationPhase.UNIFIED_PUSH) {
+          awaitLateEndpoint(registration)
+        } else if (!registration.renewsActive && registration.phase == PushRegistrationPhase.DISTRIBUTOR) {
           retireUnifiedPush(registration.instance)
         }
         if (registration.phase == PushRegistrationPhase.EMBEDDED) {
@@ -1012,6 +1012,13 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
     registration.timeout = timeout
     mainHandler.postDelayed(timeout, PUSH_REGISTRATION_TIMEOUT_MS)
+  }
+
+  private fun awaitLateEndpoint(registration: PushRegistration) {
+    val distributor = registration.distributor ?: UnifiedPush.getSavedDistributor(activity)
+    unifiedPushState.activeInstance = registration.instance
+    unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) "fcm" else registration.provider)
+    unifiedPushState.distributor = distributor
   }
 
   private fun retireUnifiedPush(instance: String?, strict: Boolean = false) {
