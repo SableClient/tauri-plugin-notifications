@@ -127,6 +127,12 @@ class EmbeddedPushService : Service() {
         return START_STICKY
     }
 
+    /** The system hands a restarted service its pending start through here, not onStartCommand, once the user has swiped the task away. */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        onStartCommand(rootIntent, 0, 0)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         closing = true
         connectivity?.unregisterNetworkCallback(networkCallback)

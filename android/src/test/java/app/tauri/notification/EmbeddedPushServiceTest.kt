@@ -100,6 +100,13 @@ class EmbeddedPushServiceTest {
     }
 
     @Test
+    fun connectsWhenARestartedServiceIsToldTheTaskWasRemoved() {
+        service.onTaskRemoved(null)
+
+        assertEquals(1, connections.size)
+    }
+
+    @Test
     fun waitsForSubscriberReadiness() {
         start()
         val (socket, listener) = connections.single()
