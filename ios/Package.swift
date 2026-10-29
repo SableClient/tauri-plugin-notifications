@@ -42,7 +42,8 @@ let package = Package(
       swiftSettings: swiftSettings),
     .testTarget(
         name: "PluginTests",
-        dependencies: ["tauri-plugin-notifications", .byName(name: "Tauri")]
+        dependencies: ["tauri-plugin-notifications", .byName(name: "Tauri")],
+        swiftSettings: swiftSettings
     ),
   ]
 )

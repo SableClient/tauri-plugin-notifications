@@ -309,6 +309,7 @@ class NotificationPlugin: Plugin {
           )))
           return
         }
+        AppDelegateSwizzler.swizzlePushCallbacks()
         self.pushTokenCompletions.append(completion)
         guard self.pushTokenCompletions.count == 1 else { return }
 

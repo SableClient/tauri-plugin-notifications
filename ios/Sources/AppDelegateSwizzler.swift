@@ -10,7 +10,12 @@ enum AppDelegateSwizzler {
   private static var originalIMPs: [Selector: IMP] = [:]
   private static var swizzled = false
 
+  /// Safe to call repeatedly: the app delegate may not be set yet the first time.
   static func swizzlePushCallbacks() {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { swizzlePushCallbacks() }
+      return
+    }
     guard !swizzled else { return }
     guard let delegate = UIApplication.shared.delegate else { return }
     swizzled = true
@@ -31,15 +36,20 @@ enum AppDelegateSwizzler {
       #selector(UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)),
       #selector(PushForwarder.ta_application(_:didReceiveRemoteNotification:fetchCompletionHandler:))
     )
+
+    // UIKit caches which delegate selectors exist at assignment, so reassign to pick up the new ones.
+    UIApplication.shared.delegate = nil
+    UIApplication.shared.delegate = delegate
   }
 
-  /// Installs the forwarder, keeping the delegate's own implementation so it can still be chained.
-  private static func install(_ cls: AnyClass, _ selector: Selector, _ replacement: Selector) {
+  static func install(_ cls: AnyClass, _ selector: Selector, _ replacement: Selector) {
     guard let replacementMethod = class_getInstanceMethod(PushForwarder.self, replacement) else { return }
-    let replacementIMP = method_getImplementation(replacementMethod)
-    let typeEncoding = method_getTypeEncoding(replacementMethod)
-    if let previousIMP = class_replaceMethod(cls, selector, replacementIMP, typeEncoding) {
-      originalIMPs[selector] = previousIMP
+    // class_replaceMethod returns nil for an inherited implementation, so capture it first.
+    let effectiveIMP = class_getInstanceMethod(cls, selector).map(method_getImplementation)
+    let ownIMP = class_replaceMethod(
+      cls, selector, method_getImplementation(replacementMethod), method_getTypeEncoding(replacementMethod))
+    if let original = ownIMP ?? effectiveIMP {
+      originalIMPs[selector] = original
     }
   }
 
