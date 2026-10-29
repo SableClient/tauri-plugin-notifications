@@ -437,16 +437,8 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
-    #[cfg(target_os = "linux")]
     pub const fn set_click_listener_active(&self, _active: bool) -> crate::Result<()> {
         Ok(())
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn set_click_listener_active(&self, _active: bool) -> crate::Result<()> {
-        Err(crate::Error::Io(std::io::Error::other(
-            "Click listeners are not supported with notify-rust",
-        )))
     }
 
     pub const fn set_action_listener_active(&self, _active: bool) -> crate::Result<()> {

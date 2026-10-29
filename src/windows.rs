@@ -37,7 +37,7 @@ use windows::Win32::UI::Notifications::{
 use windows::core::{BOOL, GUID, HSTRING, Interface, PCWSTR, Ref, implement};
 
 use crate::WindowsConfig;
-use crate::error::{ErrorResponse, PluginInvokeError};
+
 use crate::models::*;
 
 /// True when the current process has MSIX package identity.
@@ -147,11 +147,7 @@ fn parse_clsid(raw: &str) -> windows::core::Result<GUID> {
 // Enable `?` operator for windows::core::Error
 impl From<windows::core::Error> for crate::Error {
     fn from(err: windows::core::Error) -> Self {
-        crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-            code: Some(format!("0x{:08X}", err.code().0)),
-            message: Some(err.message().to_string()),
-            data: (),
-        }))
+        crate::error::rejected(Some(format!("0x{:08X}", err.code().0)), err.message())
     }
 }
 

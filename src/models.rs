@@ -47,6 +47,16 @@ pub struct BatteryOptimizationResponse {
     pub ignoring: bool,
 }
 
+/// Push provider requested at registration. Mirrors the guest `PushProvider` type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PushProvider {
+    Auto,
+    Fcm,
+    UnifiedPush,
+    Embedded,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushTransport {
@@ -674,6 +684,23 @@ mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn push_provider_uses_the_guest_spelling() {
+        for (provider, name) in [
+            (PushProvider::Auto, "auto"),
+            (PushProvider::Fcm, "fcm"),
+            (PushProvider::UnifiedPush, "unifiedpush"),
+            (PushProvider::Embedded, "embedded"),
+        ] {
+            assert_eq!(serde_json::to_value(provider).expect("serialize"), name);
+            assert_eq!(
+                serde_json::from_value::<PushProvider>(serde_json::json!(name)).expect("parse"),
+                provider
+            );
+        }
+        assert!(serde_json::from_value::<PushProvider>(serde_json::json!("apns")).is_err());
+    }
 
     #[test]
     fn test_attachment_creation() {

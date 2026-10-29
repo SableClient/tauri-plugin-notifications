@@ -1,7 +1,6 @@
 // Tauri command handlers must take owned values: `State<'_, _>` is the framework's
 // preferred wrapper, and serde-deserialized payloads (Vec, String, ...) cannot be borrowed.
 #![allow(clippy::needless_pass_by_value)]
-#![allow(clippy::unused_async)]
 
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime, State, command, plugin::PermissionState};
@@ -43,7 +42,7 @@ pub async fn register_for_push_notifications<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,
     vapid: Option<String>,
-    provider: Option<String>,
+    provider: Option<crate::models::PushProvider>,
     embedded_gateway_url: Option<String>,
     user_id: Option<String>,
     device_id: Option<String>,

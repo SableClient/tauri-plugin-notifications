@@ -14,8 +14,6 @@ use std::sync::{OnceLock, RwLock};
 use tauri::Manager;
 use tauri::{AppHandle, Runtime};
 
-use crate::error::{ErrorResponse, PluginInvokeError};
-
 type ChannelMap = HashMap<u32, tauri::ipc::Channel<serde_json::Value>>;
 type ListenerMap = HashMap<String, ChannelMap>;
 
@@ -47,21 +45,13 @@ pub fn has_listeners(event: &str) -> bool {
 // Owned `payload` is taken from the FFI bridge in `macos.rs`.
 #[allow(dead_code, clippy::needless_pass_by_value)]
 pub fn trigger(event: &str, payload: String) -> crate::Result<()> {
-    let listeners = LISTENERS.get().ok_or_else(|| {
-        crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-            code: None,
-            message: Some("Listeners not initialized".to_string()),
-            data: (),
-        }))
-    })?;
+    let listeners = LISTENERS
+        .get()
+        .ok_or_else(|| crate::error::rejected(None, "Listeners not initialized"))?;
 
     let channels: Vec<tauri::ipc::Channel<serde_json::Value>> = {
         let guard = listeners.read().map_err(|e| {
-            crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-                code: None,
-                message: Some(format!("Failed to acquire read lock: {e}")),
-                data: (),
-            }))
+            crate::error::rejected(None, format!("Failed to acquire read lock: {e}"))
         })?;
         guard
             .get(event)
@@ -71,11 +61,7 @@ pub fn trigger(event: &str, payload: String) -> crate::Result<()> {
 
     if !channels.is_empty() {
         let value: serde_json::Value = serde_json::from_str(&payload).map_err(|e| {
-            crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-                code: None,
-                message: Some(format!("Failed to parse payload JSON: {e}")),
-                data: (),
-            }))
+            crate::error::rejected(None, format!("Failed to parse payload JSON: {e}"))
         })?;
         for channel in &channels {
             let _ = channel.send(value.clone());
@@ -102,11 +88,7 @@ pub fn register_listener<R: Runtime>(
     let should_drain_clicks = event == "notificationClicked";
     {
         let mut guard = listeners.write().map_err(|e| {
-            crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-                code: None,
-                message: Some(format!("Failed to acquire write lock: {e}")),
-                data: (),
-            }))
+            crate::error::rejected(None, format!("Failed to acquire write lock: {e}"))
         })?;
         guard
             .entry(event)
@@ -129,20 +111,12 @@ pub fn register_listener<R: Runtime>(
 #[allow(clippy::needless_pass_by_value)]
 #[tauri::command]
 pub fn remove_listener(event: String, channel_id: u32) -> crate::Result<()> {
-    let listeners = LISTENERS.get().ok_or_else(|| {
-        crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-            code: None,
-            message: Some("Listeners not initialized".to_string()),
-            data: (),
-        }))
-    })?;
+    let listeners = LISTENERS
+        .get()
+        .ok_or_else(|| crate::error::rejected(None, "Listeners not initialized"))?;
     {
         let mut guard = listeners.write().map_err(|e| {
-            crate::Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
-                code: None,
-                message: Some(format!("Failed to acquire write lock: {e}")),
-                data: (),
-            }))
+            crate::error::rejected(None, format!("Failed to acquire write lock: {e}"))
         })?;
         if let Some(channels) = guard.get_mut(&event) {
             channels.remove(&channel_id);

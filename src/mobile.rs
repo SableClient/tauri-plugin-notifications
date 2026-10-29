@@ -1,5 +1,4 @@
 // Async on every target for a uniform API; some platform branches never await.
-#![allow(clippy::unused_async)]
 
 use serde::de::DeserializeOwned;
 use tauri::{
@@ -62,10 +61,11 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn register_for_push_notifications(
         &self,
         vapid: Option<String>,
-        provider: Option<String>,
+        provider: Option<crate::models::PushProvider>,
         embedded_gateway_url: Option<String>,
         user_id: Option<String>,
         device_id: Option<String>,
@@ -78,7 +78,7 @@ impl<R: Runtime> Notifications<R> {
                 #[serde(skip_serializing_if = "Option::is_none")]
                 vapid: Option<String>,
                 #[serde(skip_serializing_if = "Option::is_none")]
-                provider: Option<String>,
+                provider: Option<crate::models::PushProvider>,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 embedded_gateway_url: Option<String>,
                 #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,6 +109,7 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn unregister_for_push_notifications(&self) -> crate::Result<()> {
         #[cfg(feature = "push-notifications")]
         {
@@ -230,6 +231,7 @@ impl<R: Runtime> Notifications<R> {
     }
 
     #[allow(unused_variables, clippy::needless_pass_by_value)]
+    #[allow(clippy::unused_async)]
     pub async fn create_channel(&self, channel: Channel) -> crate::Result<()> {
         #[cfg(target_os = "android")]
         return self
@@ -244,6 +246,7 @@ impl<R: Runtime> Notifications<R> {
     }
 
     #[allow(unused_variables, clippy::needless_pass_by_value)]
+    #[allow(clippy::unused_async)]
     pub async fn delete_channel(&self, id: impl Into<String> + Send) -> crate::Result<()> {
         #[cfg(target_os = "android")]
         {
@@ -260,6 +263,7 @@ impl<R: Runtime> Notifications<R> {
         )));
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn list_channels(&self) -> crate::Result<Vec<Channel>> {
         #[cfg(target_os = "android")]
         return self
@@ -307,6 +311,7 @@ impl<R: Runtime> Notifications<R> {
             .map_err(Into::into)
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn is_ignoring_battery_optimizations(&self) -> crate::Result<bool> {
         #[cfg(all(target_os = "android", feature = "push-notifications"))]
         {
@@ -325,6 +330,7 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
         #[cfg(all(target_os = "android", feature = "push-notifications"))]
         {
@@ -339,6 +345,7 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
         #[cfg(target_os = "android")]
         {
@@ -352,5 +359,4 @@ impl<R: Runtime> Notifications<R> {
             Ok(crate::models::PushTransport::default())
         }
     }
-
 }

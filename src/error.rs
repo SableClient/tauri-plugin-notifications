@@ -46,6 +46,15 @@ pub enum PluginInvokeError {
     CannotSerializePayload(serde_json::Error),
 }
 
+#[cfg(desktop)]
+pub fn rejected(code: Option<String>, message: impl Into<String>) -> Error {
+    Error::from(PluginInvokeError::InvokeRejected(ErrorResponse {
+        code,
+        message: Some(message.into()),
+        data: (),
+    }))
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]

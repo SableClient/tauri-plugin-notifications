@@ -30,12 +30,7 @@ mod validation {
                 .then_some(())
             })
             .ok_or_else(|| {
-                crate::error::PluginInvokeError::InvokeRejected(crate::error::ErrorResponse {
-                    code: None,
-                    message: Some("Notifications plugin requires the app to run from a .app bundle. You can enable notify-rust feature for development.".to_string()),
-                    data: (),
-                })
-                .into()
+                crate::error::rejected(None, "Notifications plugin requires the app to run from a .app bundle. You can enable notify-rust feature for development.")
             })
     }
 }
@@ -81,6 +76,12 @@ impl std::fmt::Debug for ffi::NotificationPlugin {
     }
 }
 
+impl From<ffi::FFIResult> for crate::Error {
+    fn from(ffi::FFIResult::Err(msg): ffi::FFIResult) -> Self {
+        crate::error::rejected(None, msg)
+    }
+}
+
 /// Extension trait for parsing FFI responses from Swift into typed Rust results.
 trait ParseFfiResponse {
     /// Deserializes a JSON response into the target type, converting FFI errors
@@ -90,18 +91,8 @@ trait ParseFfiResponse {
 
 impl ParseFfiResponse for Result<String, ffi::FFIResult> {
     fn parse<T: DeserializeOwned>(self) -> crate::Result<T> {
-        match self {
-            Ok(json) => serde_json::from_str(&json)
-                .map_err(|e| crate::error::PluginInvokeError::CannotDeserializeResponse(e).into()),
-            Err(ffi::FFIResult::Err(msg)) => Err(crate::error::PluginInvokeError::InvokeRejected(
-                crate::error::ErrorResponse {
-                    code: None,
-                    message: Some(msg),
-                    data: (),
-                },
-            )
-            .into()),
-        }
+        serde_json::from_str(&self?)
+            .map_err(|e| crate::error::PluginInvokeError::CannotDeserializeResponse(e).into())
     }
 }
 
@@ -109,35 +100,9 @@ trait ParseFfiVoidResponse {
     fn parse_void(self) -> crate::Result<()>;
 }
 
-impl ParseFfiVoidResponse for Result<(), ffi::FFIResult> {
+impl<T> ParseFfiVoidResponse for Result<T, ffi::FFIResult> {
     fn parse_void(self) -> crate::Result<()> {
-        match self {
-            Ok(()) => Ok(()),
-            Err(ffi::FFIResult::Err(msg)) => Err(crate::error::PluginInvokeError::InvokeRejected(
-                crate::error::ErrorResponse {
-                    code: None,
-                    message: Some(msg),
-                    data: (),
-                },
-            )
-            .into()),
-        }
-    }
-}
-
-impl ParseFfiVoidResponse for Result<i32, ffi::FFIResult> {
-    fn parse_void(self) -> crate::Result<()> {
-        match self {
-            Ok(_) => Ok(()),
-            Err(ffi::FFIResult::Err(msg)) => Err(crate::error::PluginInvokeError::InvokeRejected(
-                crate::error::ErrorResponse {
-                    code: None,
-                    message: Some(msg),
-                    data: (),
-                },
-            )
-            .into()),
-        }
+        self.map(|_| ()).map_err(Into::into)
     }
 }
 
