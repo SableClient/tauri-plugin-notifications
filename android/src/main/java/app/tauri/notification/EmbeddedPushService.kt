@@ -88,7 +88,21 @@ class EmbeddedPushService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startInForeground()
+        return syncConnection(intent?.getBooleanExtra("replay", false) == true)
+    }
 
+    /** A restarted service is not foreground yet and the app is backgrounded, so promotion can be refused. */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        try {
+            startInForeground()
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "Could not return to the foreground after the task was removed: ${error.message}")
+        }
+        syncConnection(replay = false)
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun syncConnection(replay: Boolean): Int {
         val state = UnifiedPushStateStore(this)
         val nextEndpoint = state.endpoint
         val url = if (state.activeProvider == "embedded") {
@@ -111,7 +125,7 @@ class EmbeddedPushService : Service() {
             endpoint = nextEndpoint
             retryDelay = BASE_BACKOFF_MS
         }
-        if (intent?.getBooleanExtra("replay", false) == true) {
+        if (replay) {
             cancelReconnect()
             socket?.cancel()
             socket = null
@@ -125,12 +139,6 @@ class EmbeddedPushService : Service() {
             if (ready) endpoint?.let { NotificationPlugin.instance?.onEmbeddedPushReady(it) }
         }
         return START_STICKY
-    }
-
-    /** The system hands a restarted service its pending start through here, not onStartCommand, once the user has swiped the task away. */
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        onStartCommand(rootIntent, 0, 0)
-        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

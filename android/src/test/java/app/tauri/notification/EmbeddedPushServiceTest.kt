@@ -1,6 +1,7 @@
 package app.tauri.notification
 
 import android.app.AlarmManager
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Context
 import android.net.ConnectivityManager
 import android.app.NotificationManager
@@ -11,6 +12,7 @@ import com.google.crypto.tink.apps.fixed_webpush.WebPushHybridEncrypt
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.spyk
 import io.mockk.unmockkObject
 import io.mockk.verify
 import java.io.IOException
@@ -102,6 +104,17 @@ class EmbeddedPushServiceTest {
     @Test
     fun connectsWhenARestartedServiceIsToldTheTaskWasRemoved() {
         service.onTaskRemoved(null)
+
+        assertEquals(1, connections.size)
+    }
+
+    @Test
+    fun keepsConnectingWhenForegroundIsRefusedAfterTheTaskWasRemoved() {
+        val refusing = spyk(service)
+        every { refusing.startForeground(any(), any(), any<Int>()) } throws
+            ForegroundServiceStartNotAllowedException("background")
+
+        refusing.onTaskRemoved(null)
 
         assertEquals(1, connections.size)
     }
