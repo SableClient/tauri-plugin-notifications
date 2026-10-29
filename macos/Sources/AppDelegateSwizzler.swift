@@ -84,7 +84,7 @@ final class PushForwarder: NSObject {
     let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
 
     AppDelegateSwizzler.plugin?.handlePushTokenReceived(hex)
-    try? AppDelegateSwizzler.plugin?.trigger("push-token", data: ["token": hex])
+    AppDelegateSwizzler.plugin?.emit("push-token", data: ["token": hex])
 
     AppDelegateSwizzler.callOriginalDidRegister(
       self,
@@ -97,7 +97,7 @@ final class PushForwarder: NSObject {
   @objc func ta_application(_ application: NSApplication,
                             didFailToRegisterForRemoteNotificationsWithError error: Error) {
     AppDelegateSwizzler.plugin?.handlePushTokenError(error)
-    try? AppDelegateSwizzler.plugin?.trigger("push-error", data: ["message": error.localizedDescription])
+    AppDelegateSwizzler.plugin?.emit("push-error", data: ["message": error.localizedDescription])
 
     AppDelegateSwizzler.callOriginalDidFail(
       self,
@@ -109,12 +109,7 @@ final class PushForwarder: NSObject {
 
   @objc func ta_application(_ application: NSApplication,
                             didReceiveRemoteNotification userInfo: [String: Any]) {
-    // Convert to [String: String] for Encodable
-    var stringDict: [String: String] = [:]
-    for (key, value) in userInfo {
-      stringDict[key] = String(describing: value)
-    }
-    try? AppDelegateSwizzler.plugin?.trigger("push-message", data: stringDict)
+    AppDelegateSwizzler.plugin?.emitJSON("push-message", object: jsonCompatible(userInfo))
 
     AppDelegateSwizzler.callOriginalDidReceive(
       self,

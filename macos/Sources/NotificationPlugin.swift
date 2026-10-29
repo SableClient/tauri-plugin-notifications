@@ -93,6 +93,10 @@ struct SetClickListenerActiveArgs: Decodable {
   let active: Bool
 }
 
+struct SetActionListenerActiveArgs: Decodable {
+  let active: Bool
+}
+
 struct RemoveActiveNotification: Decodable {
   let id: Int
 }
@@ -168,8 +172,8 @@ class NotificationPlugin {
   let notificationManager = NotificationManager()
 
   #if ENABLE_PUSH_NOTIFICATIONS
-    // Completion handler for push token registration
-    private var pushTokenCompletion: ((Result<String, Error>) -> Void)?
+    // Push registration state is only touched on the main queue.
+    private var pushTokenCompletions = [(Result<String, Error>) -> Void]()
     private let pushTokenTimeout: TimeInterval = 10.0
     private var pushTokenTimer: Timer?
   #endif
@@ -239,6 +243,10 @@ class NotificationPlugin {
     #if ENABLE_PUSH_NOTIFICATIONS
       DispatchQueue.main.async {
         NSApplication.shared.unregisterForRemoteNotifications()
+        self.handlePushTokenError(NSError(
+          domain: "NotificationPlugin", code: -2,
+          userInfo: [NSLocalizedDescriptionKey: "Push registration cancelled"]
+        ))
       }
     #else
       throw FFIResult.Err(RustString("Push notifications are disabled in this build"))
@@ -322,60 +330,61 @@ class NotificationPlugin {
     notificationHandler.setClickListenerActive(args.active)
   }
 
+  public func setActionListenerActive(args: RustString) throws(FFIResult) {
+    let args = try args.decode(SetActionListenerActiveArgs.self)
+    notificationHandler.setActionListenerActive(args.active)
+  }
+
   #if ENABLE_PUSH_NOTIFICATIONS
     private func registerForPushNotificationsWithCompletion(_ completion: @escaping (Result<String, Error>) -> Void)
     {
-      // Store completion for later
-      self.pushTokenCompletion = completion
+      // The caller's thread may have no running run loop, so the Timer would never fire.
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else {
+          completion(.failure(NSError(
+            domain: "NotificationPlugin", code: -2,
+            userInfo: [NSLocalizedDescriptionKey: "Notification plugin unavailable"]
+          )))
+          return
+        }
+        AppDelegateSwizzler.swizzlePushCallbacks()
+        self.pushTokenCompletions.append(completion)
+        guard self.pushTokenCompletions.count == 1 else { return }
 
-      // Set up timeout
-      self.pushTokenTimer?.invalidate()
-      self.pushTokenTimer = Timer.scheduledTimer(withTimeInterval: pushTokenTimeout, repeats: false)
-      { [weak self] _ in
-        self?.handlePushTokenTimeout()
-      }
+        self.pushTokenTimer?.invalidate()
+        self.pushTokenTimer = Timer.scheduledTimer(
+          withTimeInterval: self.pushTokenTimeout, repeats: false
+        ) { [weak self] _ in
+          self?.handlePushTokenTimeout()
+        }
 
-      // Register for remote notifications
-      DispatchQueue.main.async {
         NSApplication.shared.registerForRemoteNotifications()
       }
     }
 
     private func handlePushTokenTimeout() {
+      handlePushTokenError(NSError(
+        domain: "NotificationPlugin",
+        code: -1,
+        userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for device token"]
+      ))
+    }
+
+    private func settlePushCompletions(_ result: Result<String, Error>) {
       pushTokenTimer?.invalidate()
       pushTokenTimer = nil
 
-      if let completion = pushTokenCompletion {
-        pushTokenCompletion = nil
-        let error = NSError(
-          domain: "NotificationPlugin",
-          code: -1,
-          userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for device token"]
-        )
-        completion(.failure(error))
-      }
+      let completions = pushTokenCompletions
+      pushTokenCompletions.removeAll()
+      completions.forEach { $0(result) }
     }
 
-    // Called by AppDelegateSwizzler when token is received
     func handlePushTokenReceived(_ token: String) {
-      pushTokenTimer?.invalidate()
-      pushTokenTimer = nil
-
-      if let completion = pushTokenCompletion {
-        pushTokenCompletion = nil
-        completion(.success(token))
-      }
+      settlePushCompletions(.success(token))
     }
 
-    // Called by AppDelegateSwizzler when registration fails
     func handlePushTokenError(_ error: Error) {
-      pushTokenTimer?.invalidate()
-      pushTokenTimer = nil
-
-      if let completion = pushTokenCompletion {
-        pushTokenCompletion = nil
-        completion(.failure(error))
-      }
+      settlePushCompletions(.failure(error))
     }
   #endif
 
@@ -387,6 +396,41 @@ class NotificationPlugin {
         userInfo: [NSLocalizedDescriptionKey: "Failed to encode data to JSON string"])
     }
     try bridgeTrigger(RustString(event), RustString(jsonString))
+  }
+
+  func emitJSON(_ event: String, object: Any) {
+    guard JSONSerialization.isValidJSONObject(object),
+      let data = try? JSONSerialization.data(withJSONObject: object),
+      let json = String(data: data, encoding: .utf8)
+    else {
+      NSLog("tauri-plugin-notifications: '\(event)' payload is not valid JSON")
+      return
+    }
+    do {
+      try bridgeTrigger(RustString(event), RustString(json))
+    } catch {
+      NSLog("tauri-plugin-notifications: failed to deliver '\(event)': \(error)")
+    }
+  }
+
+  func emit<T: Encodable>(_ event: String, data: T) {
+    do {
+      try trigger(event, data: data)
+    } catch {
+      NSLog("tauri-plugin-notifications: failed to deliver '\(event)': \(error)")
+    }
+  }
+}
+
+func jsonCompatible(_ value: Any) -> Any {
+  switch value {
+  case let string as String: return string
+  case let number as NSNumber: return number
+  case is NSNull: return NSNull()
+  case let array as [Any]: return array.map(jsonCompatible)
+  case let dictionary as [AnyHashable: Any]:
+    return Dictionary(uniqueKeysWithValues: dictionary.map { (String(describing: $0.key), jsonCompatible($0.value)) })
+  default: return String(describing: value)
   }
 }
 

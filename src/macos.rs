@@ -71,6 +71,7 @@ mod ffi {
         fn removeAllActive(&self) -> Result<(), FFIResult>;
         async fn getActive(&self) -> Result<String, FFIResult>;
         fn setClickListenerActive(&self, args: String) -> Result<(), FFIResult>;
+        fn setActionListenerActive(&self, args: String) -> Result<(), FFIResult>;
     }
 }
 
@@ -323,8 +324,17 @@ impl<R: Runtime> Notifications<R> {
             .parse_void()
     }
 
-    pub const fn set_action_listener_active(&self, _active: bool) -> crate::Result<()> {
-        Ok(())
+    pub fn set_action_listener_active(&self, active: bool) -> crate::Result<()> {
+        validation::require_bundle()?;
+
+        let mut args = HashMap::new();
+        args.insert("active", active);
+        self.plugin
+            .setActionListenerActive(
+                serde_json::to_string(&args)
+                    .map_err(crate::error::PluginInvokeError::CannotSerializePayload)?,
+            )
+            .parse_void()
     }
 
     pub const fn set_push_message_listener_active(&self, _active: bool) -> crate::Result<()> {
@@ -338,6 +348,11 @@ impl<R: Runtime> Notifications<R> {
 
     pub fn request_ignore_battery_optimizations(&self) -> crate::Result<()> {
         Ok(())
+    }
+
+    #[allow(clippy::unused_self)]
+    pub fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
+        Ok(crate::models::PushTransport::default())
     }
 
     /// Create a notification channel (not supported on macOS).
