@@ -15,10 +15,49 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
   // Serializes delegate callbacks and plugin commands.
   private let stateLock = NSRecursiveLock()
 
-  internal func saveNotification(_ key: String, _ notification: Notification) {
+  private var saveTokens = [String: UInt64]()
+  private var lastSaveToken: UInt64 = 0
+
+  internal struct SavedNotification {
+    let key: String
+    fileprivate let token: UInt64
+    fileprivate let previous: (notification: Notification, token: UInt64)?
+  }
+
+  @discardableResult
+  internal func saveNotification(_ key: String, _ notification: Notification) -> SavedNotification {
     stateLock.lock()
     defer { stateLock.unlock() }
+    lastSaveToken += 1
+    let previous = notificationsMap[key].flatMap { old in
+      saveTokens[key].map { (notification: old, token: $0) }
+    }
     notificationsMap.updateValue(notification, forKey: key)
+    saveTokens[key] = lastSaveToken
+    return SavedNotification(key: key, token: lastSaveToken, previous: previous)
+  }
+
+  /// Skipped when a later save already replaced it.
+  internal func rollback(_ saved: SavedNotification) {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    guard saveTokens[saved.key] == saved.token else { return }
+    if let previous = saved.previous {
+      notificationsMap[saved.key] = previous.notification
+      saveTokens[saved.key] = previous.token
+    } else {
+      notificationsMap.removeValue(forKey: saved.key)
+      saveTokens.removeValue(forKey: saved.key)
+    }
+  }
+
+  internal func forget(_ keys: [String]) {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    keys.forEach {
+      notificationsMap.removeValue(forKey: $0)
+      saveTokens.removeValue(forKey: $0)
+    }
   }
 
   func setClickListenerActive(_ active: Bool) {
@@ -27,7 +66,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     let pending = active ? pendingNotificationClick : nil
     if pending != nil { pendingNotificationClick = nil }
     stateLock.unlock()
-    if let pending { try? self.plugin?.trigger("notificationClicked", data: pending) }
+    if let pending { self.plugin?.emit("notificationClicked", pending) }
   }
 
   func setActionListenerActive(_ active: Bool) {
@@ -38,7 +77,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     stateLock.unlock()
     guard active else { return }
     for action in pendingActions {
-      try? self.plugin?.trigger("actionPerformed", data: action)
+      self.plugin?.emit("actionPerformed", action)
     }
   }
 
@@ -50,7 +89,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     }
     if !shouldTrigger { pendingNotificationActions.append(action) }
     stateLock.unlock()
-    if shouldTrigger { try? self.plugin?.trigger("actionPerformed", data: action) }
+    if shouldTrigger { self.plugin?.emit("actionPerformed", action) }
   }
 
   public func requestPermissions(with completion: ((Bool, Error?) -> Void)? = nil) {
@@ -92,7 +131,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       options = [.badge, .sound, .alert]
     }
     stateLock.unlock()
-    if let event { try? self.plugin?.trigger(event.0, data: event.1) }
+    if let event { self.plugin?.emit(event.0, event.1) }
     return options
   }
 
@@ -104,7 +143,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: content.title,
       body: content.body,
-      extra: notificationExtra(content.userInfo)
+      extra: Self.notificationExtra(content.userInfo)
     )
   }
 
@@ -144,7 +183,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
 
     if actionId != UNNotificationDefaultActionIdentifier {
       stateLock.unlock()
-      if shouldTriggerAction { try? self.plugin?.trigger("actionPerformed", data: action) }
+      if shouldTriggerAction { self.plugin?.emit("actionPerformed", action) }
       return
     }
 
@@ -153,7 +192,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       ?? roomNotificationId(originalNotificationRequest.content.userInfo) ?? -1
     let clickedData = NotificationClickedData(
       id: id,
-      data: notificationExtra(originalNotificationRequest.content.userInfo)
+      data: Self.notificationExtra(originalNotificationRequest.content.userInfo)
     )
 
     let shouldTriggerClick = hasClickedListener
@@ -164,8 +203,8 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       pendingNotificationClick = clickedData
     }
     stateLock.unlock()
-    if shouldTriggerAction { try? self.plugin?.trigger("actionPerformed", data: action) }
-    if shouldTriggerClick { try? self.plugin?.trigger("notificationClicked", data: clickedData) }
+    if shouldTriggerAction { self.plugin?.emit("actionPerformed", action) }
+    if shouldTriggerClick { self.plugin?.emit("notificationClicked", clickedData) }
   }
 
   func toActiveNotification(_ request: UNNotificationRequest) -> ActiveNotification? {
@@ -181,7 +220,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       sound: notificationRequest.sound ?? "",
       actionTypeId: request.content.categoryIdentifier,
       attachments: notificationRequest.attachments,
-      extra: notificationExtra(request.content.userInfo)
+      extra: Self.notificationExtra(request.content.userInfo)
     )
   }
 
@@ -193,12 +232,12 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       sound: "",
       actionTypeId: request.content.categoryIdentifier,
       attachments: nil,
-      extra: notificationExtra(request.content.userInfo),
+      extra: Self.notificationExtra(request.content.userInfo),
       source: "push"
     )
   }
 
-  private func notificationExtra(_ userInfo: [AnyHashable: Any]) -> [String: String]? {
+  private static func notificationExtra(_ userInfo: [AnyHashable: Any]) -> [String: String]? {
     var notification = userInfo["notification"] as? [String: Any]
     if let encoded = userInfo["notification"] as? String,
        let data = encoded.data(using: .utf8) {
@@ -237,14 +276,14 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
   }
 
   func roomNotificationId(_ userInfo: [AnyHashable: Any]) -> Int? {
-    guard let extra = notificationExtra(userInfo),
+    guard let extra = Self.notificationExtra(userInfo),
           let user = extra["user_id"], !user.isEmpty,
           let room = extra["room_id"], !room.isEmpty else { return nil }
     let hash = (user + "\u{0}" + room).utf16.reduce(Int32(0)) { ($0 &* 31) &+ Int32($1) }
     return hash == Int32.min ? 0 : Int(hash.magnitude)
   }
 
-  func matchesMessage(_ first: [AnyHashable: Any], _ second: [AnyHashable: Any]) -> Bool {
+  static func matchesMessage(_ first: [AnyHashable: Any], _ second: [AnyHashable: Any]) -> Bool {
     guard let first = notificationExtra(first), let second = notificationExtra(second) else { return false }
     return ["user_id", "room_id", "event_id"].allSatisfy { key in
       guard let value = first[key], !value.isEmpty else { return false }
@@ -333,4 +372,18 @@ struct ReceivedNotificationData: Encodable {
   let body: String
   let extra: [String: String]?
   var source: String = "push"
+}
+
+extension Plugin {
+  func emit<T: Encodable>(_ event: String, _ data: T) {
+    do {
+      try trigger(event, data: data)
+    } catch {
+      Logger.error("Failed to deliver '\(event)': \(error)")
+    }
+  }
+
+  func emit(_ event: String, _ data: JSObject) {
+    trigger(event, data: data)
+  }
 }

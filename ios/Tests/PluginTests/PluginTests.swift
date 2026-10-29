@@ -24,8 +24,8 @@ final class NotificationTests: XCTestCase {
         let id = handler.roomNotificationId(content.userInfo)!
         XCTAssertTrue(handler.matches(UNNotificationRequest(identifier: notificationRequestIdentifier(second), content: content, trigger: nil), ids: [id]))
         let remote: [AnyHashable: Any] = ["user_id": "@alice:example.org", "notification": ["room_id": "!room:example.org", "event_id": "$second"]]
-        XCTAssertTrue(handler.matchesMessage(remote, content.userInfo))
-        XCTAssertFalse(handler.matchesMessage(remote, try makeNotificationContent(first).userInfo))
+        XCTAssertTrue(NotificationHandler.matchesMessage(remote, content.userInfo))
+        XCTAssertFalse(NotificationHandler.matchesMessage(remote, try makeNotificationContent(first).userInfo))
     }
 
     func testRemoteDismissalMatchesRecipientAndRoomInsteadOfApnsIdentifier() {

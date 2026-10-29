@@ -88,7 +88,7 @@ final class PushForwarder: NSObject, UIApplicationDelegate {
     let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
     let rotated = AppDelegateSwizzler.plugin?.isRegisteringPush == false
     AppDelegateSwizzler.plugin?.handlePushTokenReceived(hex)
-    try? AppDelegateSwizzler.plugin?.trigger("push-token", data: ["token": hex, "rotated": rotated])
+    AppDelegateSwizzler.plugin?.emit("push-token", ["token": hex, "rotated": rotated])
     AppDelegateSwizzler.callOriginalDidRegister(
       self,
       #selector(UIApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:)),
@@ -100,7 +100,7 @@ final class PushForwarder: NSObject, UIApplicationDelegate {
   @objc func ta_application(_ application: UIApplication,
                             didFailToRegisterForRemoteNotificationsWithError error: Error) {
     AppDelegateSwizzler.plugin?.handlePushTokenError(error)
-    try? AppDelegateSwizzler.plugin?.trigger("push-error", data: ["message": error.localizedDescription])
+    AppDelegateSwizzler.plugin?.emit("push-error", ["message": error.localizedDescription])
     AppDelegateSwizzler.callOriginalDidFail(
       self,
       #selector(UIApplicationDelegate.application(_:didFailToRegisterForRemoteNotificationsWithError:)),
@@ -112,8 +112,11 @@ final class PushForwarder: NSObject, UIApplicationDelegate {
   @objc func ta_application(_ application: UIApplication,
                             didReceiveRemoteNotification userInfo: [AnyHashable : Any],
                             fetchCompletionHandler completion: @escaping (UIBackgroundFetchResult) -> Void) {
+    // Tauri cannot report whether a JS listener is subscribed, so any payload counts as handled.
+    var handled = false
     if let jsData = JSTypes.coerceDictionaryToJSObject(userInfo) {
-      try? AppDelegateSwizzler.plugin?.trigger("push-message", data: jsData)
+      AppDelegateSwizzler.plugin?.emit("push-message", jsData)
+      handled = AppDelegateSwizzler.plugin != nil
     }
     let chained = AppDelegateSwizzler.callOriginalDidReceive(
       self,
@@ -123,7 +126,7 @@ final class PushForwarder: NSObject, UIApplicationDelegate {
       completion
     )
     if !chained {
-      completion(.noData)
+      completion(handled ? .newData : .noData)
     }
   }
 }
