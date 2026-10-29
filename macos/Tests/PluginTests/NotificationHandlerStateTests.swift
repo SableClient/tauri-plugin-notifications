@@ -24,6 +24,13 @@ final class NotificationHandlerStateTests: XCTestCase {
       json: #"{"id":2,"title":"t","schedule":{"every":{"interval":"day","count":1}}}"#)
     XCTAssertEqual(handler.toPendingNotification(request)?.id, 2)
   }
+
+  func testProvisionalAndEphemeralGrantsAllowDelivery() {
+    XCTAssertTrue(NotificationHandler.allowsDelivery(.authorized))
+    XCTAssertTrue(NotificationHandler.allowsDelivery(.provisional))
+    XCTAssertFalse(NotificationHandler.allowsDelivery(.denied))
+    XCTAssertFalse(NotificationHandler.allowsDelivery(.notDetermined))
+  }
 }
 
 final class PushPayloadTests: XCTestCase {

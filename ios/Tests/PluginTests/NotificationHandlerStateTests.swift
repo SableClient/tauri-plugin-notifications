@@ -50,4 +50,11 @@ final class NotificationHandlerStateTests: XCTestCase {
     XCTAssertNil(handler.toActiveNotification(request))
   }
 
+  func testProvisionalAndEphemeralGrantsAllowDelivery() {
+    XCTAssertTrue(NotificationHandler.allowsDelivery(.authorized))
+    XCTAssertTrue(NotificationHandler.allowsDelivery(.provisional))
+    XCTAssertTrue(NotificationHandler.allowsDelivery(.ephemeral))
+    XCTAssertFalse(NotificationHandler.allowsDelivery(.denied))
+    XCTAssertFalse(NotificationHandler.allowsDelivery(.notDetermined))
+  }
 }

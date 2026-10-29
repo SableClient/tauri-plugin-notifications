@@ -292,8 +292,7 @@ class NotificationPlugin: Plugin {
 
   @objc public func registerForPushNotifications(_ invoke: Invoke) {
     #if ENABLE_PUSH_NOTIFICATIONS
-      // First request notification permissions
-      notificationHandler.requestPermissions { [weak self] granted, error in
+      notificationHandler.ensureDeliveryAllowed { [weak self] granted, error in
         guard error == nil else {
           invoke.reject(error!.localizedDescription)
           return
@@ -462,9 +461,15 @@ class NotificationPlugin: Plugin {
       center.getDeliveredNotifications { [weak self] delivered in
         center.removeAllDeliveredNotifications()
         self?.notificationHandler.forget(delivered.map { $0.request.identifier })
-        DispatchQueue.main.async(execute: {
-          UIApplication.shared.applicationIconBadgeNumber = 0
-        })
+        if #available(iOS 16.0, *) {
+          center.setBadgeCount(0) { error in
+            if let error { Logger.error("Failed to clear the badge: \(error)") }
+          }
+        } else {
+          DispatchQueue.main.async(execute: {
+            UIApplication.shared.applicationIconBadgeNumber = 0
+          })
+        }
         invoke.resolve()
       }
       return

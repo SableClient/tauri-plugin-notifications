@@ -99,6 +99,24 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     }
   }
 
+  static func allowsDelivery(_ status: UNAuthorizationStatus) -> Bool {
+    switch status {
+    case .authorized, .provisional, .ephemeral: return true
+    default: return false
+    }
+  }
+
+  /// A provisional or ephemeral grant makes the request report `granted == false`.
+  func ensureDeliveryAllowed(with completion: @escaping (Bool, Error?) -> Void) {
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+      if Self.allowsDelivery(settings.authorizationStatus) {
+        completion(true, nil)
+      } else {
+        self.requestPermissions(with: completion)
+      }
+    }
+  }
+
   public func checkPermissions(with completion: ((UNAuthorizationStatus) -> Void)? = nil) {
     let center = UNUserNotificationCenter.current()
     center.getNotificationSettings { settings in
@@ -128,7 +146,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     } else if let local = notificationsMap[notification.request.identifier], local.silent ?? false {
       options = UNNotificationPresentationOptions(rawValue: 0)
     } else {
-      options = [.badge, .sound, .alert]
+      options = [.banner, .list, .badge, .sound]
     }
     stateLock.unlock()
     if let event { self.plugin?.emit(event.0, event.1) }

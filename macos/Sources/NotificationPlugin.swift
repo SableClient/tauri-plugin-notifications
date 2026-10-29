@@ -211,10 +211,9 @@ class NotificationPlugin {
 
   public func registerForPushNotifications() async throws(FFIResult) -> String {
     #if ENABLE_PUSH_NOTIFICATIONS
-      // First request notification permissions
       let granted: Bool
       do {
-        granted = try await notificationHandler.requestPermissions()
+        granted = try await notificationHandler.ensureDeliveryAllowed()
       } catch {
         throw FFIResult.Err(RustString("Failed to request notification permissions: \(error.localizedDescription)"))
       }
@@ -309,9 +308,10 @@ class NotificationPlugin {
   }
 
   public func removeAllActive() throws(FFIResult) {
-    UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-    DispatchQueue.main.async {
-      NSApp.dockTile.badgeLabel = nil
+    let center = UNUserNotificationCenter.current()
+    center.removeAllDeliveredNotifications()
+    center.setBadgeCount(0) { error in
+      if let error { NSLog("tauri-plugin-notifications: failed to clear the badge: \(error)") }
     }
   }
 

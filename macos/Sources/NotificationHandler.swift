@@ -43,6 +43,19 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     return try await center.requestAuthorization(options: [.badge, .alert, .sound])
   }
 
+  static func allowsDelivery(_ status: UNAuthorizationStatus) -> Bool {
+    switch status {
+    case .authorized, .provisional, .ephemeral: return true
+    default: return false
+    }
+  }
+
+  /// A provisional grant makes the request report `granted == false`.
+  func ensureDeliveryAllowed() async throws -> Bool {
+    if Self.allowsDelivery(await checkPermissions().authorizationStatus) { return true }
+    return try await requestPermissions()
+  }
+
   public func checkPermissions() async -> UNNotificationSettings {
     let center = UNUserNotificationCenter.current()
     return await center.notificationSettings()
@@ -74,11 +87,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       return UNNotificationPresentationOptions.init(rawValue: 0)
     }
 
-    return [
-      .badge,
-      .sound,
-      .alert,
-    ]
+    return [.banner, .list, .badge, .sound]
   }
 
   /// Convert notification request to ReceivedNotification (for push notifications not in map)
