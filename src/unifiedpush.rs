@@ -50,6 +50,13 @@ struct ActiveRegistration {
     endpoint: String,
 }
 
+impl ActiveRegistration {
+    fn satisfies(&self, selected: Option<&str>, token: Option<&str>) -> bool {
+        selected.is_none_or(|name| name == self.distributor)
+            && token.is_none_or(|token| token == self.client_token)
+    }
+}
+
 /// Callback used to display an incoming push as a desktop toast. Provided
 /// by the cross-platform layer at construction time so this module doesn't
 /// have to know about `Notifications<R>` (avoids making `UnifiedPushState`
@@ -70,6 +77,8 @@ pub struct UnifiedPushState {
     token: RwLock<Option<String>>,
     active: RwLock<Option<ActiveRegistration>>,
     pending: Mutex<HashMap<String, oneshot::Sender<Result<String, String>>>>,
+    /// Serialises `register` so concurrent calls cannot register the same client token twice.
+    register_lock: Mutex<()>,
     /// `None` means "don't display a toast for incoming pushes" — the JS
     /// listener still fires. Practically always `Some` when constructed from
     /// `desktop.rs`.
@@ -105,6 +114,7 @@ impl UnifiedPushState {
             token: RwLock::new(None),
             active: RwLock::new(None),
             pending: Mutex::new(HashMap::new()),
+            register_lock: Mutex::new(()),
             displayer,
         });
 
@@ -207,18 +217,25 @@ impl UnifiedPushState {
     }
 
     pub async fn register(&self) -> crate::Result<String> {
-        // Return the existing endpoint rather than orphaning the current token.
-        if let Some(active) = self.active.read().await.as_ref() {
-            return Ok(active.endpoint.clone());
+        let _serialised = self.register_lock.lock().await;
+
+        let selected = self.selected.read().await.clone();
+        let requested_token = self.token.read().await.clone();
+        let current = self.active.read().await.clone();
+        if let Some(active) = current {
+            // Reuse the endpoint rather than orphaning the current token.
+            if active.satisfies(selected.as_deref(), requested_token.as_deref()) {
+                return Ok(active.endpoint);
+            }
+            // A distributor that has gone away must not block switching.
+            if let Err(e) = self.unregister_locked().await {
+                log::warn!("Failed to release the previous UnifiedPush registration: {e}");
+                *self.active.write().await = None;
+            }
         }
 
         let distributor = self.pick_distributor().await?;
-        let client_token = self
-            .token
-            .read()
-            .await
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let client_token = requested_token.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let proxy = DistributorProxy::builder(&self.connection)
             .destination(distributor.clone())
@@ -288,6 +305,12 @@ impl UnifiedPushState {
     }
 
     pub async fn unregister(&self) -> crate::Result<()> {
+        let _serialised = self.register_lock.lock().await;
+        self.unregister_locked().await
+    }
+
+    /// Callers must hold `register_lock`, which is not reentrant.
+    async fn unregister_locked(&self) -> crate::Result<()> {
         // Read first (clone), only clear `self.active` after the D-Bus call
         // succeeds. Otherwise a transient failure leaves the plugin thinking
         // it's unregistered while the distributor still has the token.
@@ -418,8 +441,8 @@ fn handle_message(state: &UnifiedPushState, _token: &str, message: &[u8], _id: &
     // `desktop.rs`. That path uses the same `notify-rust + active map`
     // pipeline as local notifications, so incoming pushes show up in
     // `Notifications::active()` and can be cancelled like any other
-    // notification. Pass the original (possibly None) parsed title so the
-    // desktop layer can decide whether to fall back to the app identifier.
+    // notification. The title is passed after the product-name fallback so the
+    // toast matches what listeners received.
     if let Some(displayer) = state.displayer.as_ref() {
         displayer(Some(title), parsed.body);
     }
@@ -498,6 +521,26 @@ mod tests {
         assert!(parsed.title.is_none());
         assert!(parsed.body.is_none());
         assert!(matches!(parsed.extra, Some(JsonValue::String(_))));
+    }
+
+    fn active() -> ActiveRegistration {
+        ActiveRegistration {
+            client_token: "token".into(),
+            distributor: "org.unifiedpush.Distributor.a".into(),
+            endpoint: "https://push.example/1".into(),
+        }
+    }
+
+    #[test]
+    fn active_registration_is_reused_when_nothing_changed() {
+        assert!(active().satisfies(None, None));
+        assert!(active().satisfies(Some("org.unifiedpush.Distributor.a"), Some("token")));
+    }
+
+    #[test]
+    fn active_registration_is_not_reused_after_distributor_or_token_changed() {
+        assert!(!active().satisfies(Some("org.unifiedpush.Distributor.b"), None));
+        assert!(!active().satisfies(None, Some("other")));
     }
 
     #[test]
