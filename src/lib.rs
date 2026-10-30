@@ -64,6 +64,11 @@ mod windows;
 mod activation;
 mod commands;
 mod error;
+#[cfg(any(
+    all(desktop, target_os = "linux"),
+    all(target_os = "windows", not(feature = "notify-rust"))
+))]
+mod focus;
 #[cfg(desktop)]
 mod listeners;
 mod models;

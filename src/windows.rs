@@ -56,15 +56,6 @@ fn is_packaged() -> bool {
     Package::Current().is_ok()
 }
 
-/// A foreground tap raises the app, as on Linux; `WinRT` only activates it.
-fn focus_app<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.webview_windows().into_values().next() {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
 /// Resolve a user-supplied image string into a URI scheme Windows toast
 /// notifications can actually load.
 ///
@@ -382,7 +373,7 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
         app_id,
         packaged,
         notifier,
-        focus: Box::new(move || focus_app(&focus_handle)),
+        focus: Box::new(move || crate::focus::focus_app(&focus_handle)),
         action_types: RwLock::new(HashMap::new()),
         pending: PendingActivations::default(),
         com_cookie: RwLock::new(None),

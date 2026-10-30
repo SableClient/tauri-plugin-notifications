@@ -20,7 +20,7 @@ use crate::NotificationsBuilder;
 #[cfg(target_os = "linux")]
 struct ActiveEntry {
     caller_id: i32,
-    handle: notify_rust::NotificationHandle,
+    handle: std::sync::Arc<notify_rust::NotificationHandle>,
     title: Option<String>,
     body: Option<String>,
 }
@@ -73,37 +73,65 @@ fn click_payload(
     serde_json::json!({ "id": caller_id, "data": extra })
 }
 
+/// A failed query is not cached so a daemon that starts later is picked up.
 #[cfg(target_os = "linux")]
-fn wait_for_click<R: Runtime>(app: &AppHandle<R>, server_id: u32, payload: &serde_json::Value) {
-    let clicked = std::cell::Cell::new(false);
-    if let Err(e) = notify_rust::handle_action(server_id, |response| {
-        clicked.set(matches!(
-            response,
-            notify_rust::ActionResponse::Custom(DEFAULT_ACTION)
-        ));
-    }) {
-        log::warn!("Failed to listen for a notification click: {e}");
-        return;
+fn server_capabilities() -> &'static [String] {
+    static CAPABILITIES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    if let Some(capabilities) = CAPABILITIES.get() {
+        return capabilities;
     }
-    if !clicked.get() {
-        return;
-    }
-
-    focus_app(app);
-    if let Err(e) = crate::listeners::trigger("notificationClicked", payload.to_string()) {
-        log::warn!("Failed to deliver a notification click: {e}");
+    match notify_rust::get_capabilities() {
+        Ok(capabilities) => CAPABILITIES.get_or_init(|| capabilities),
+        Err(e) => {
+            log::warn!("Failed to query notification server capabilities: {e}");
+            &[]
+        }
     }
 }
 
-#[cfg(target_os = "linux")]
-fn focus_app<R: Runtime>(app: &AppHandle<R>) {
-    use tauri::Manager;
-
-    if let Some(window) = app.webview_windows().into_values().next() {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+/// GNOME Shell only accepts the five named XML entities, so a numeric entity
+/// like `&#39;` would be shown literally.
+#[cfg(any(target_os = "linux", test))]
+fn escape_markup(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            _ => escaped.push(c),
+        }
     }
+    escaped
+}
+
+#[cfg(target_os = "linux")]
+fn watch_notification<R: Runtime>(
+    app: AppHandle<R>,
+    entry_id: u64,
+    handle: std::sync::Arc<notify_rust::NotificationHandle>,
+    click_payload: Option<serde_json::Value>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut clicked = false;
+        handle
+            .wait_for_action_async(|response| {
+                clicked = matches!(response, notify_rust::NotificationResponse::Default);
+            })
+            .await;
+
+        {
+            use tauri::Manager;
+            app.state::<Notifications<R>>().forget(entry_id);
+        }
+        if let (true, Some(payload)) = (clicked, click_payload) {
+            crate::focus::focus_app(&app);
+            if let Err(e) = crate::listeners::trigger("notificationClicked", payload.to_string()) {
+                log::warn!("Failed to deliver a notification click: {e}");
+            }
+        }
+    });
 }
 
 #[cfg(target_os = "linux")]
@@ -141,9 +169,44 @@ impl<R: Runtime> Notifications<R> {
             *active = kept;
         }
         for entry in to_close {
-            tauri::async_runtime::spawn_blocking(move || entry.handle.close());
+            tauri::async_runtime::spawn(async move { entry.handle.close_async().await });
         }
         Ok(())
+    }
+
+    /// Recovers a poisoned lock because losing the handle would dismiss the popup on some daemons.
+    fn track(
+        &self,
+        caller_id: i32,
+        handle: notify_rust::NotificationHandle,
+        title: Option<String>,
+        body: Option<String>,
+    ) -> (u64, std::sync::Arc<notify_rust::NotificationHandle>) {
+        let handle = std::sync::Arc::new(handle);
+        let entry_id = self
+            .active_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let entry = ActiveEntry {
+            caller_id,
+            handle: handle.clone(),
+            title,
+            body,
+        };
+        self.active
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::warn!("active notifications mutex was poisoned; recovering");
+                poisoned.into_inner()
+            })
+            .insert(entry_id, entry);
+        (entry_id, handle)
+    }
+
+    fn forget(&self, entry_id: u64) {
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&entry_id);
     }
 }
 
@@ -173,12 +236,16 @@ impl<R: Runtime> Notifications<R> {
         std::sync::Arc::new(move |title: Option<String>, body: Option<String>| {
             let app = app.clone();
             let identifier = app.config().identifier.clone();
+            let app_name = app_name(&app);
+            let desktop_entry = desktop_entry_name(app.config().product_name.as_deref());
             tauri::async_runtime::spawn_blocking(move || {
                 let notification = match imp::build_notification(
                     title.as_deref(),
                     body.as_deref(),
                     None,
                     &identifier,
+                    &app_name,
+                    desktop_entry.as_deref(),
                 ) {
                     Ok(n) => n,
                     Err(e) => {
@@ -188,26 +255,10 @@ impl<R: Runtime> Notifications<R> {
                 };
                 match notification.show() {
                     Ok(handle) => {
-                        use std::sync::atomic::Ordering;
                         use tauri::Manager;
                         let state = app.state::<Self>();
-                        let entry_id = state.active_counter.fetch_add(1, Ordering::Relaxed);
-                        let entry = ActiveEntry {
-                            caller_id: 0,
-                            handle,
-                            title,
-                            body,
-                        };
-                        let lock = state.active.lock();
-                        match lock {
-                            Ok(mut active) => {
-                                active.insert(entry_id, entry);
-                            }
-                            Err(poisoned) => {
-                                log::warn!("active notifications mutex was poisoned; recovering");
-                                poisoned.into_inner().insert(entry_id, entry);
-                            }
-                        }
+                        let (entry_id, handle) = state.track(0, handle, title, body);
+                        watch_notification(app.clone(), entry_id, handle, None);
                     }
                     Err(e) => log::warn!("Failed to show push notification toast: {e}"),
                 }
@@ -229,84 +280,72 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
         #[cfg(target_os = "linux")]
         let extra = self.data.extra;
         let identifier = self.app.config().identifier.clone();
+        let app_name = app_name(&self.app);
+        let desktop_entry = desktop_entry_name(self.app.config().product_name.as_deref());
         let app = self.app.clone();
 
-        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
-        let mut notification = imp::build_notification(
-            title.as_deref(),
-            body.as_deref(),
-            icon.as_deref(),
-            &identifier,
-        )?;
-        #[cfg(target_os = "linux")]
-        notification.action(DEFAULT_ACTION, DEFAULT_ACTION);
-
-        // `notify_rust::Notification::show()` is sync and runs an internal
-        // blocking D-Bus call (via zbus's `block_on`). Calling it inside
-        // `async_runtime::spawn` panics with "Cannot start a runtime from
-        // within a runtime"; `spawn_blocking` parks it on a blocking thread.
-        // We `.await` the join so we can capture the handle for tracking and
-        // surface any error to the caller.
-        let join_result = tauri::async_runtime::spawn_blocking(move || notification.show())
-            .await
+        // `notify_rust` blocks on D-Bus via zbus's `block_on`, which panics inside an async task.
+        // Building the notification queries the server too, so all of it runs on a blocking thread.
+        let (shown_title, shown_body) = (title.clone(), body.clone());
+        let join_result = tauri::async_runtime::spawn_blocking(move || {
+            imp::build_notification(
+                shown_title.as_deref(),
+                shown_body.as_deref(),
+                icon.as_deref(),
+                &identifier,
+                &app_name,
+                desktop_entry.as_deref(),
+            )?
+            .show()
             .map_err(|e| {
                 crate::Error::Io(std::io::Error::other(format!(
-                    "notification spawn_blocking join error: {e}"
-                )))
-            })?;
-
-        match join_result {
-            #[cfg(target_os = "linux")]
-            Ok(handle) => {
-                use std::sync::atomic::Ordering;
-                use tauri::Manager;
-                let payload = click_payload(caller_id, &extra);
-                let server_id = handle.id();
-                let listener_app = app.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    wait_for_click(&listener_app, server_id, &payload);
-                });
-                let state = app.state::<Notifications<R>>();
-                let entry_id = state.active_counter.fetch_add(1, Ordering::Relaxed);
-                let entry = ActiveEntry {
-                    caller_id,
-                    handle,
-                    title,
-                    body,
-                };
-                // Take the lock into a binding so its `MutexGuard` temporary
-                // doesn't outlive `state` in the `match` arms.
-                let lock_result = state.active.lock();
-                match lock_result {
-                    Ok(mut active) => {
-                        active.insert(entry_id, entry);
-                    }
-                    Err(poisoned) => {
-                        log::warn!("active notifications mutex was poisoned; recovering");
-                        poisoned.into_inner().insert(entry_id, entry);
-                    }
-                }
-            }
-            // macOS / Windows: drop the `NotificationHandle`. Neither
-            // platform's daemon dismisses popups on sender disconnect, so
-            // there's nothing to keep alive.
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Ok(_) => {
-                let _ = (caller_id, title, body, app);
-            }
-            // Propagate the underlying `notify-rust` failure (missing
-            // notification daemon, D-Bus permission denied, etc.) instead of
-            // swallowing it — matches the mobile/macOS behavior and lets JS
-            // callers handle delivery failures.
-            Err(e) => {
-                return Err(crate::Error::Io(std::io::Error::other(format!(
                     "Failed to show notification: {e}"
-                ))));
-            }
+                )))
+            })
+        })
+        .await
+        .map_err(|e| {
+            crate::Error::Io(std::io::Error::other(format!(
+                "notification spawn_blocking join error: {e}"
+            )))
+        })?;
+
+        let handle = join_result?;
+
+        #[cfg(target_os = "linux")]
+        {
+            use tauri::Manager;
+            let state = app.state::<Notifications<R>>();
+            let (entry_id, handle) = state.track(caller_id, handle, title, body);
+            let payload = click_payload(caller_id, &extra);
+            watch_notification(app.clone(), entry_id, handle, Some(payload));
         }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let _ = (handle, caller_id, title, body, app);
 
         Ok(())
     }
+}
+
+/// Flatpak names the `.desktop` file after the app id, the Tauri bundler after the
+/// product name. Omitted when neither is known, since a wrong name breaks the
+/// daemon's grouping and icon lookup.
+fn desktop_entry_name(product_name: Option<&str>) -> Option<String> {
+    desktop_entry_from(std::env::var("FLATPAK_ID").ok().as_deref(), product_name)
+}
+
+fn desktop_entry_from(flatpak_id: Option<&str>, product_name: Option<&str>) -> Option<String> {
+    flatpak_id
+        .or(product_name)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
+fn app_name<R: Runtime>(app: &AppHandle<R>) -> String {
+    app.config()
+        .product_name
+        .clone()
+        .unwrap_or_else(|| app.config().identifier.clone())
 }
 
 // `async` mirrors the mobile/macOS plugin API so callers can `.await` uniformly.
@@ -515,9 +554,7 @@ impl<R: Runtime> Notifications<R> {
                 active.drain().map(|(_, v)| v).collect()
             };
             for entry in drained {
-                // `handle.close()` runs a blocking platform call; push it
-                // off the current thread so the command returns quickly.
-                tauri::async_runtime::spawn_blocking(move || entry.handle.close());
+                tauri::async_runtime::spawn(async move { entry.handle.close_async().await });
             }
             Ok(())
         }
@@ -571,9 +608,23 @@ mod imp {
         body: Option<&str>,
         icon: Option<&str>,
         identifier: &str,
+        app_name: &str,
+        desktop_entry: Option<&str>,
     ) -> crate::Result<notify_rust::Notification> {
         let mut notification = notify_rust::Notification::new();
+        #[cfg(target_os = "linux")]
+        let capabilities = super::server_capabilities();
+        #[cfg(target_os = "linux")]
+        let has = |name: &str| capabilities.iter().any(|capability| capability == name);
+
         if let Some(body) = body {
+            #[cfg(target_os = "linux")]
+            if has("body-markup") {
+                notification.body(&super::escape_markup(body));
+            } else {
+                notification.body(body);
+            }
+            #[cfg(not(target_os = "linux"))]
             notification.body(body);
         }
         if let Some(title) = title {
@@ -583,6 +634,20 @@ mod imp {
             notification.icon(icon);
         } else {
             notification.auto_icon();
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            notification
+                .appname(app_name)
+                .hint(notify_rust::Hint::Category("im.received".to_owned()));
+            if let Some(desktop_entry) = desktop_entry {
+                notification.hint(notify_rust::Hint::DesktopEntry(desktop_entry.to_owned()));
+            }
+            // Servers without the `actions` capability ignore or mishandle actions.
+            if has("actions") {
+                notification.action(super::DEFAULT_ACTION, super::DEFAULT_ACTION);
+            }
         }
 
         #[cfg(windows)]
@@ -606,20 +671,49 @@ mod imp {
                 identifier
             });
         }
-        // `identifier` is used by the cfg-gated Windows/macOS branches above
-        // — silence the unused-parameter warning on Linux.
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "linux"))]
+        let _ = (app_name, desktop_entry);
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         let _ = identifier;
 
         Ok(notification)
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
+    use super::escape_markup;
+
+    #[test]
+    fn markup_characters_in_the_body_are_escaped() {
+        assert_eq!(
+            escape_markup(r#"<b>"a" & 'b'</b>"#),
+            "&lt;b&gt;&quot;a&quot; &amp; 'b'&lt;/b&gt;"
+        );
+        assert_eq!(escape_markup("plain"), "plain");
+    }
+
+    #[test]
+    fn desktop_entry_follows_flatpak_id_then_product_name() {
+        use super::desktop_entry_from;
+        assert_eq!(
+            desktop_entry_from(Some("org.example.App"), Some("App")).as_deref(),
+            Some("org.example.App")
+        );
+        assert_eq!(
+            desktop_entry_from(None, Some("My App")).as_deref(),
+            Some("My App")
+        );
+        assert_eq!(desktop_entry_from(None, None), None);
+        assert_eq!(desktop_entry_from(Some(""), None), None);
+    }
+
+    #[cfg(target_os = "linux")]
     use super::click_payload;
+    #[cfg(target_os = "linux")]
     use std::collections::HashMap;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn click_payload_carries_the_id_and_the_extra_data() {
         let extra = HashMap::from([
@@ -636,6 +730,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn click_payload_without_extra_data_has_an_empty_object() {
         assert_eq!(
