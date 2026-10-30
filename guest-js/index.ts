@@ -904,24 +904,29 @@ async function onAction(
     throw error;
   }
 
-  let unregistered = false;
+  // Shared so concurrent calls neither decrement twice nor resolve before the real unregister finishes.
+  let inFlight: Promise<void> | undefined;
   return {
-    unregister: async () => {
-      if (unregistered) return;
-      await withActionListenerLock(async () => {
-        if (actionListenerCount > 1) {
-          actionListenerCount -= 1;
-          return;
+    unregister: () =>
+      (inFlight ??= (async () => {
+        try {
+          await withActionListenerLock(async () => {
+            if (actionListenerCount > 1) {
+              actionListenerCount -= 1;
+              return;
+            }
+            // Keep the final listener until native deactivation succeeds.
+            await invoke("plugin:notifications|set_action_listener_active", {
+              active: false,
+            });
+            actionListenerCount = 0;
+          });
+        } catch (error) {
+          inFlight = undefined;
+          throw error;
         }
-        // Keep the final listener until native deactivation succeeds.
-        await invoke("plugin:notifications|set_action_listener_active", {
-          active: false,
-        });
-        actionListenerCount = 0;
-      });
-      unregistered = true;
-      await listener.unregister();
-    },
+        await listener.unregister();
+      })()),
   } as PluginListener;
 }
 
@@ -929,7 +934,7 @@ let actionListenerCount = 0;
 let actionListenerLock = Promise.resolve();
 
 function withActionListenerLock<T>(operation: () => Promise<T>): Promise<T> {
-  const result = actionListenerLock.then(operation, operation);
+  const result = actionListenerLock.then(() => operation());
   actionListenerLock = result.then(
     () => undefined,
     () => undefined,

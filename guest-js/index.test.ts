@@ -1037,6 +1037,59 @@ describe("Notification Functions", () => {
       expect(mockInvoke).toHaveBeenCalledTimes(2);
     });
 
+    it("counts a listener once when unregister is called concurrently", async () => {
+      mockAddPluginListener.mockResolvedValue({
+        unregister: vi.fn().mockResolvedValue(undefined),
+      });
+      mockInvoke.mockResolvedValue(undefined);
+
+      const first = await onAction(vi.fn());
+      const second = await onAction(vi.fn());
+      await Promise.all([first.unregister(), first.unregister()]);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      await second.unregister();
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+    });
+
+    it("resolves concurrent unregister calls only after the real one completes", async () => {
+      const unregister = vi.fn().mockResolvedValue(undefined);
+      mockAddPluginListener.mockResolvedValue({ unregister });
+      let release: () => void = () => {};
+      mockInvoke
+        .mockResolvedValueOnce(undefined)
+        .mockReturnValueOnce(new Promise<void>((r) => (release = r)));
+
+      const listener = await onAction(vi.fn());
+      let secondDone = false;
+      const first = listener.unregister();
+      const second = listener.unregister().then(() => (secondDone = true));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(secondDone).toBe(false);
+      release();
+      await Promise.all([first, second]);
+      expect(secondDone).toBe(true);
+      expect(unregister).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects every concurrent unregister call when the real one fails", async () => {
+      mockAddPluginListener.mockResolvedValue({
+        unregister: vi.fn().mockResolvedValue(undefined),
+      });
+      mockInvoke
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("deactivation failed"));
+
+      const listener = await onAction(vi.fn());
+      const results = await Promise.allSettled([
+        listener.unregister(),
+        listener.unregister(),
+      ]);
+      expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+      mockInvoke.mockResolvedValue(undefined);
+      await listener.unregister();
+    });
+
     it("rolls back the JS listener when activation fails", async () => {
       const unregister = vi.fn().mockResolvedValue(undefined);
       mockAddPluginListener.mockResolvedValue({ unregister });
