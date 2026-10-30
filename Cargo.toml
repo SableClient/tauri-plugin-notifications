@@ -60,6 +60,7 @@ windows = { version = "0.61", features = [
     "Win32_System_Com",
     "Win32_System_Registry",
     "Win32_UI_Notifications",
+    "Win32_UI_Shell",
 ] }
 # The `#[implement]` macro from `windows::core::implement` emits `::windows_core::*`
 # absolute paths, so `windows-core` must be a direct dependency, not just

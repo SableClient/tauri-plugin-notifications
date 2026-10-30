@@ -60,6 +60,8 @@ mod unifiedpush;
 #[cfg(all(target_os = "windows", not(feature = "notify-rust")))]
 mod windows;
 
+#[cfg(any(test, all(target_os = "windows", not(feature = "notify-rust"))))]
+mod activation;
 mod commands;
 mod error;
 #[cfg(desktop)]

@@ -111,6 +111,7 @@ impl<T> ParseFfiVoidResponse for Result<T, ffi::FFIResult> {
 #[allow(clippy::needless_pass_by_value)]
 fn bridge_trigger(event: String, payload: String) -> Result<(), ffi::FFIResult> {
     crate::listeners::trigger(&event, payload)
+        .map(|_| ())
         .map_err(|e| ffi::FFIResult::Err(format!("Failed to trigger event '{event}': {e}")))
 }
 

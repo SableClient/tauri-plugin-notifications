@@ -18,13 +18,14 @@ use windows::Networking::PushNotifications::{
     PushNotificationChannel, PushNotificationChannelManager,
 };
 use windows::UI::Notifications::{
-    NotificationSetting, ScheduledToastNotification, ToastActivatedEventArgs, ToastNotification,
-    ToastNotificationManager, ToastNotifier,
+    NotificationSetting, ScheduledToastNotification, ToastActivatedEventArgs, ToastFailedEventArgs,
+    ToastNotification, ToastNotificationManager, ToastNotifier,
 };
 use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, S_FALSE, S_OK};
 use windows::Win32::System::Com::{
     CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoInitializeEx, CoRegisterClassObject,
-    IClassFactory, IClassFactory_Impl, REGCLS_MULTIPLEUSE,
+    CoResumeClassObjects, CoRevokeClassObject, IClassFactory, IClassFactory_Impl,
+    REGCLS_MULTIPLEUSE, REGCLS_SUSPENDED,
 };
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
@@ -34,9 +35,11 @@ use windows::Win32::UI::Notifications::{
     INotificationActivationCallback, INotificationActivationCallback_Impl,
     NOTIFICATION_USER_INPUT_DATA,
 };
+use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 use windows::core::{BOOL, GUID, HSTRING, Interface, PCWSTR, Ref, implement};
 
 use crate::WindowsConfig;
+use crate::activation::{PendingActivations, button_arguments, decode_activation, launch_context};
 
 use crate::models::*;
 
@@ -158,12 +161,8 @@ pub struct WindowsPlugin {
     notifier: ToastNotifier,
     focus: Box<dyn Fn() + Send + Sync>,
     action_types: RwLock<HashMap<String, ActionType>>,
-    click_listener_active: RwLock<bool>,
-    action_listener_active: RwLock<bool>,
-    /// Cold-start activation payloads queued before any JS listener has
-    /// subscribed. Drained synchronously the first time a `notificationClicked`
-    /// listener registers (see `crate::listeners::register_listener`).
-    pending_clicks: RwLock<Vec<serde_json::Value>>,
+    /// Drained when a listener for the event registers (see `crate::listeners::register_listener`).
+    pending: PendingActivations,
     /// `CoRegisterClassObject` cookie. Kept for the process lifetime — no
     /// explicit `CoRevokeClassObject` on shutdown; the OS reclaims it on exit.
     /// `None` when no COM activator was registered.
@@ -203,68 +202,6 @@ impl std::fmt::Debug for WindowsPlugin {
     }
 }
 
-/// Result of decoding a toast activation's `Arguments` string.
-///
-/// `build_toast_xml` encodes notification id + extras as JSON into the toast's
-/// `launch=` attribute; foreground taps deliver that JSON in `Arguments`,
-/// button activations deliver the action's `arguments=` (a plain string). This
-/// struct lets the warm (in-process) and cold (COM) paths share decoding so
-/// the event shapes the JS layer sees are byte-identical.
-struct DecodedActivation {
-    /// `notificationClicked` payload — `Some` for foreground taps, `None` for
-    /// button activations.
-    click: Option<serde_json::Value>,
-    /// `actionPerformed` payload — always populated.
-    action: serde_json::Value,
-}
-
-fn decode_activation(invoked_args: &str, inputs: &HashMap<String, String>) -> DecodedActivation {
-    let input_value = inputs
-        .values()
-        .next()
-        .cloned()
-        .map_or(serde_json::Value::Null, serde_json::Value::String);
-
-    let parsed: Option<serde_json::Value> = serde_json::from_str::<serde_json::Value>(invoked_args)
-        .ok()
-        .filter(serde_json::Value::is_object);
-
-    if let Some(launch) = parsed {
-        let action = serde_json::json!({
-            "actionId": "tap",
-            "inputValue": input_value,
-            "notification": launch.clone(),
-        });
-        DecodedActivation {
-            click: Some(launch),
-            action,
-        }
-    } else if invoked_args.is_empty() {
-        // Legacy path: toasts produced before `launch=` was set, or a tap with
-        // no extras. Emit a click with no payload so subscribers still fire.
-        let action = serde_json::json!({
-            "actionId": "tap",
-            "inputValue": input_value,
-            "notification": serde_json::Value::Null,
-        });
-        DecodedActivation {
-            click: Some(serde_json::json!({ "id": serde_json::Value::Null, "data": {} })),
-            action,
-        }
-    } else {
-        // Button activation — `invoked_args` is the action's `arguments=`.
-        let action = serde_json::json!({
-            "actionId": invoked_args,
-            "inputValue": input_value,
-            "notification": serde_json::Value::Null,
-        });
-        DecodedActivation {
-            click: None,
-            action,
-        }
-    }
-}
-
 impl INotificationActivationCallback_Impl for ToastActivator_Impl {
     fn Activate(
         &self,
@@ -287,21 +224,11 @@ impl INotificationActivationCallback_Impl for ToastActivator_Impl {
         }
 
         let decoded = decode_activation(&invoked, &inputs);
-        let _ = crate::listeners::trigger("actionPerformed", decoded.action.to_string());
-
-        if let Some(click_payload) = decoded.click {
-            if let Some(plugin) = self.plugin.upgrade() {
+        if let Some(plugin) = self.plugin.upgrade() {
+            plugin.deliver_or_buffer("actionPerformed", decoded.action);
+            if let Some(click_payload) = decoded.click {
                 (plugin.focus)();
-            }
-            // Deliver live OR buffer — never both. Buffering when a listener is
-            // already subscribed causes duplicate events on the next re-subscribe
-            // (hot reload, route change).
-            if crate::listeners::has_listeners("notificationClicked") {
-                let _ = crate::listeners::trigger("notificationClicked", click_payload.to_string());
-            } else if let Some(plugin) = self.plugin.upgrade() {
-                if let Ok(mut buf) = plugin.pending_clicks.write() {
-                    buf.push(click_payload);
-                }
+                plugin.deliver_or_buffer("notificationClicked", click_payload);
             }
         }
         Ok(())
@@ -347,62 +274,26 @@ impl WindowsPlugin {
             .map_err(|_| crate::Error::Io(std::io::Error::other("Lock poisoned")))
     }
 
-    fn is_click_listener_active(&self) -> crate::Result<bool> {
-        Ok(*self
-            .click_listener_active
-            .read()
-            .map_err(|_| crate::Error::Io(std::io::Error::other("Lock poisoned")))?)
-    }
-
-    fn set_click_listener(&self, active: bool) -> crate::Result<()> {
-        *self
-            .click_listener_active
-            .write()
-            .map_err(|_| crate::Error::Io(std::io::Error::other("Lock poisoned")))? = active;
-        Ok(())
-    }
-
     /// The COM activator receives every activation, the popup's included.
     fn has_com_activator(&self) -> bool {
         self.com_cookie.read().is_ok_and(|cookie| cookie.is_some())
     }
 
-    fn is_action_listener_active(&self) -> crate::Result<bool> {
-        Ok(*self
-            .action_listener_active
-            .read()
-            .map_err(|_| crate::Error::Io(std::io::Error::other("Lock poisoned")))?)
+    fn deliver_or_buffer(&self, event: &'static str, payload: serde_json::Value) {
+        self.pending
+            .deliver_or_buffer(event, payload, |payload| self.trigger(event, payload));
     }
 
-    fn set_action_listener(&self, active: bool) -> crate::Result<()> {
-        *self
-            .action_listener_active
-            .write()
-            .map_err(|_| crate::Error::Io(std::io::Error::other("Lock poisoned")))? = active;
-        Ok(())
+    fn trigger(&self, event: &str, payload: &serde_json::Value) -> bool {
+        crate::listeners::trigger(event, payload.to_string()).unwrap_or_else(|e| {
+            log::error!("Failed to deliver {event}: {e}");
+            false
+        })
     }
 
-    fn is_activation_listener_active(&self) -> crate::Result<bool> {
-        Ok(self.is_click_listener_active()? || self.is_action_listener_active()?)
-    }
-
-    /// Drain queued cold-start click payloads through the listener bus. Called
-    /// when a `notificationClicked` listener subscribes (see
-    /// `crate::listeners::register_listener`). Idempotent: subsequent calls
-    /// with an empty buffer are a no-op.
-    pub fn drain_pending_clicks(&self) {
-        let drained: Vec<serde_json::Value> = match self.pending_clicks.write() {
-            Ok(mut buf) => std::mem::take(&mut *buf),
-            Err(e) => {
-                log::error!("pending_clicks lock poisoned during drain: {e}");
-                return;
-            }
-        };
-        for payload in drained {
-            if let Err(e) = crate::listeners::trigger("notificationClicked", payload.to_string()) {
-                log::error!("Failed to dispatch buffered click: {e}");
-            }
-        }
+    pub fn drain_pending(&self, event: &str) {
+        self.pending
+            .drain(event, |payload| self.trigger(event, payload));
     }
 
     fn open_push_channel(&self) -> crate::Result<String> {
@@ -473,6 +364,13 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
     } else {
         None
     };
+    if !packaged {
+        // Must be set before any UI so the process AUMID matches the toast's.
+        if let Err(e) = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(&app_id)) }
+        {
+            log::warn!("Failed to set the process AppUserModelID: {e}");
+        }
+    }
     let notifier = if packaged {
         ToastNotificationManager::CreateToastNotifier()?
     } else {
@@ -486,9 +384,7 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
         notifier,
         focus: Box::new(move || focus_app(&focus_handle)),
         action_types: RwLock::new(HashMap::new()),
-        click_listener_active: RwLock::new(false),
-        action_listener_active: RwLock::new(false),
-        pending_clicks: RwLock::new(Vec::new()),
+        pending: PendingActivations::default(),
         com_cookie: RwLock::new(None),
         #[cfg(feature = "push-notifications")]
         push_channel: RwLock::new(None),
@@ -497,10 +393,19 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
     if let Some(clsid_str) = activator_clsid.as_deref() {
         match register_toast_activator(&plugin, clsid_str) {
             Ok(cookie) => {
-                if let Ok(mut slot) = plugin.com_cookie.write() {
-                    *slot = Some(cookie);
+                // Activations are held back until the plugin state exists.
+                // On failure revoke so the in-process path handles them.
+                if let Err(e) = unsafe { CoResumeClassObjects() } {
+                    log::error!("Failed to resume the toast activator class object: {e}");
+                    if let Err(e) = unsafe { CoRevokeClassObject(cookie) } {
+                        log::error!("Failed to revoke the toast activator class object: {e}");
+                    }
+                } else {
+                    if let Ok(mut slot) = plugin.com_cookie.write() {
+                        *slot = Some(cookie);
+                    }
+                    log::info!("Toast activator registered (clsid={clsid_str}, cookie={cookie})");
                 }
-                log::info!("Toast activator registered (clsid={clsid_str}, cookie={cookie})");
             }
             Err(e) => {
                 log::error!(
@@ -533,6 +438,7 @@ fn register_unpackaged_activation<R: Runtime>(
         || uuid::Uuid::new_v5(&ACTIVATOR_NAMESPACE, app_id.as_bytes()).to_string(),
         |clsid| clsid.trim_matches(['{', '}']).to_owned(),
     );
+    parse_clsid(&clsid)?;
     let braced = format!("{{{clsid}}}");
     let exe =
         std::env::current_exe().map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
@@ -618,12 +524,22 @@ fn register_toast_activator(
             &clsid,
             &factory_interface,
             CLSCTX_LOCAL_SERVER,
-            REGCLS_MULTIPLEUSE,
+            REGCLS_MULTIPLEUSE | REGCLS_SUSPENDED,
         )
     }
 }
 
 impl<R: Runtime> crate::NotificationsBuilder<R> {
+    fn launch_context(&self) -> serde_json::Value {
+        launch_context(
+            self.data.id,
+            self.data.title.as_deref(),
+            self.data.body.as_deref(),
+            self.data.action_type_id.as_deref(),
+            &self.data.extra,
+        )
+    }
+
     /// Build toast notification XML using DOM API (safer than string concatenation).
     fn build_toast_xml(
         &self,
@@ -635,14 +551,9 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
         let toast = doc.CreateElement(&HSTRING::from("toast"))?;
         doc.AppendChild(&toast)?;
 
-        // Encode notification id + extras into `launch=` so the click payload
-        // survives a cold-start activation (the COM `Activate` callback only
-        // receives the launch string; the in-process `Activated` handler
-        // delivers the same string in `ToastActivatedEventArgs.Arguments`).
-        let launch = serde_json::json!({
-            "id": self.data.id,
-            "data": self.data.extra,
-        });
+        // The COM `Activate` callback only receives the launch string, so the
+        // context must survive a cold start inside it (see `crate::activation`).
+        let launch = self.launch_context();
         toast.SetAttribute(
             &HSTRING::from("launch"),
             &HSTRING::from(launch.to_string().as_str()),
@@ -720,8 +631,10 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                     let action_el = doc.CreateElement(&HSTRING::from("action"))?;
                     action_el
                         .SetAttribute(&HSTRING::from("content"), &HSTRING::from(action.title()))?;
-                    action_el
-                        .SetAttribute(&HSTRING::from("arguments"), &HSTRING::from(action.id()))?;
+                    action_el.SetAttribute(
+                        &HSTRING::from("arguments"),
+                        &HSTRING::from(button_arguments(&launch, action.id()).as_str()),
+                    )?;
                     let activation_type = if action.foreground() {
                         "foreground"
                     } else {
@@ -780,74 +693,34 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
                 toast.SetGroup(g)?;
             }
 
-            if self.plugin.is_activation_listener_active()? && !self.plugin.has_com_activator() {
-                let notification = ActiveNotification {
-                    id: self.data.id,
-                    tag: Some(self.data.id.to_string()),
-                    title: self.data.title.clone(),
-                    body: self.data.body.clone(),
-                    group: self.data.group.clone(),
-                    group_summary: self.data.group_summary,
-                    data: HashMap::new(),
-                    extra: self.data.extra.clone(),
-                    attachments: self.data.attachments.clone(),
-                    action_type_id: self.data.action_type_id.clone(),
-                    schedule: self.data.schedule.clone(),
-                    sound: self.data.sound.clone(),
-                };
+            toast.Failed(&TypedEventHandler::new(
+                |_: windows::core::Ref<'_, ToastNotification>,
+                 args: windows::core::Ref<'_, ToastFailedEventArgs>| {
+                    if let Some(args) = &*args {
+                        log::error!("Toast failed to display: {:?}", args.ErrorCode());
+                    }
+                    Ok(())
+                },
+            ))?;
+
+            if !self.plugin.has_com_activator() {
                 let plugin = self.plugin.clone();
 
                 toast.Activated(&TypedEventHandler::new(
                     move |_: windows::core::Ref<'_, ToastNotification>,
                           args: windows::core::Ref<'_, windows::core::IInspectable>| {
-                        if let Some(inspectable) = &*args {
-                            if let Ok(activated) = inspectable.cast::<ToastActivatedEventArgs>() {
-                                let arguments = activated
-                                    .Arguments()
-                                    .map(|s| s.to_string_lossy())
-                                    .unwrap_or_default();
-
-                                // Foreground tap: empty `Arguments` (legacy
-                                // toasts without `launch=`) or the JSON object
-                                // we wrote into `launch=`. Anything else is a
-                                // button activation whose `arguments=` we
-                                // surface as the action id.
-                                let is_tap = arguments.is_empty()
-                                    || serde_json::from_str::<serde_json::Value>(&arguments)
-                                        .ok()
-                                        .is_some_and(|v| v.is_object());
-
-                                let action_id = if is_tap {
-                                    "tap".to_string()
-                                } else {
-                                    arguments.to_string()
-                                };
-
-                                let payload = serde_json::json!({
-                                    "actionId": action_id,
-                                    "inputValue": null,
-                                    "notification": notification,
-                                });
-                                if let Err(e) = crate::listeners::trigger(
-                                    "actionPerformed",
-                                    payload.to_string(),
-                                ) {
-                                    log::error!("Failed to trigger actionPerformed: {e}");
-                                }
-
-                                if is_tap {
-                                    (plugin.focus)();
-                                    let click_payload = serde_json::json!({
-                                        "id": notification.id,
-                                        "data": notification.extra,
-                                    });
-                                    if let Err(e) = crate::listeners::trigger(
-                                        "notificationClicked",
-                                        click_payload.to_string(),
-                                    ) {
-                                        log::error!("Failed to trigger notificationClicked: {e}");
-                                    }
-                                }
+                        if let Some(inspectable) = &*args
+                            && let Ok(activated) = inspectable.cast::<ToastActivatedEventArgs>()
+                        {
+                            let arguments = activated
+                                .Arguments()
+                                .map(|s| s.to_string_lossy())
+                                .unwrap_or_default();
+                            let decoded = decode_activation(&arguments, &HashMap::new());
+                            plugin.deliver_or_buffer("actionPerformed", decoded.action);
+                            if let Some(click_payload) = decoded.click {
+                                (plugin.focus)();
+                                plugin.deliver_or_buffer("notificationClicked", click_payload);
                             }
                         }
                         Ok(())
@@ -942,13 +815,8 @@ impl<R: Runtime> Notifications<R> {
         crate::NotificationsBuilder::new(self.app.clone(), self.plugin.clone())
     }
 
-    /// Drain any cold-start activation payloads queued before the JS
-    /// `notificationClicked` listener subscribed. Invoked by
-    /// `crate::listeners::register_listener` on first subscription so the
-    /// `push-listener.tsx` contract ("subscribing flushes the buffered tap")
-    /// holds without the app having to call any extra command.
-    pub fn drain_pending_clicks(&self) {
-        self.plugin.drain_pending_clicks();
+    pub fn drain_pending(&self, event: &str) {
+        self.plugin.drain_pending(event);
     }
 
     pub async fn request_permission(&self) -> crate::Result<PermissionState> {
@@ -1164,12 +1032,12 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
-    pub fn set_click_listener_active(&self, active: bool) -> crate::Result<()> {
-        self.plugin.set_click_listener(active)
+    pub const fn set_click_listener_active(&self, _active: bool) -> crate::Result<()> {
+        Ok(())
     }
 
-    pub fn set_action_listener_active(&self, active: bool) -> crate::Result<()> {
-        self.plugin.set_action_listener(active)
+    pub const fn set_action_listener_active(&self, _active: bool) -> crate::Result<()> {
+        Ok(())
     }
 
     pub const fn set_push_message_listener_active(&self, _active: bool) -> crate::Result<()> {
