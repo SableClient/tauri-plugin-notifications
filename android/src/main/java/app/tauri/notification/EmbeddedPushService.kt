@@ -88,7 +88,7 @@ class EmbeddedPushService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startInForeground()
-        return syncConnection(intent?.getBooleanExtra("replay", false) == true)
+        return syncConnection(intent?.getBooleanExtra(EXTRA_REPLAY, false) == true)
     }
 
     /** A restarted service is not foreground yet and the app is backgrounded, so promotion can be refused. */
@@ -105,7 +105,7 @@ class EmbeddedPushService : Service() {
     private fun syncConnection(replay: Boolean): Int {
         val state = UnifiedPushStateStore(this)
         val nextEndpoint = state.endpoint
-        val url = if (state.activeProvider == "embedded") {
+        val url = if (state.isEmbeddedActive) {
             EmbeddedPushEndpoint.webSocketUrlForEndpoint(nextEndpoint)
         } else null
         if (url == null) {
@@ -167,7 +167,7 @@ class EmbeddedPushService : Service() {
             .also { client = it }
 
         val state = UnifiedPushStateStore(this)
-        if (state.activeProvider != "embedded" || state.endpoint != endpoint) return
+        if (!state.isEmbeddedActive || state.endpoint != endpoint) return
         val owner = Subscription(state.endpoint ?: return, state.pushUserId, state.pushDeviceId)
         val requestUrl = Request.Builder().url(url).build().url.newBuilder().addQueryParameter("since", "12h").build()
         socket = http.newWebSocket(Request.Builder().url(requestUrl).build(), Listener(owner))
@@ -189,7 +189,7 @@ class EmbeddedPushService : Service() {
 
     private fun owns(owner: Subscription): Boolean {
         val state = UnifiedPushStateStore(this)
-        return !closing && state.activeProvider == "embedded" && state.endpoint == owner.endpoint &&
+        return !closing && state.isEmbeddedActive && state.endpoint == owner.endpoint &&
             state.pushUserId == owner.userId && state.pushDeviceId == owner.deviceId
     }
 
@@ -350,6 +350,7 @@ class EmbeddedPushService : Service() {
 
     companion object {
         private const val TAG = "EmbeddedPushService"
+        private const val EXTRA_REPLAY = "replay"
         private const val CHANNEL_ID = "embedded-push"
         private const val CHANNEL_NAME = "Background connection"
         private const val CHANNEL_DESCRIPTION =
@@ -364,7 +365,7 @@ class EmbeddedPushService : Service() {
         private const val MAX_BACKOFF_MS = 120_000L
 
         fun start(context: Context, replay: Boolean = false) {
-            val intent = Intent(context, EmbeddedPushService::class.java).putExtra("replay", replay)
+            val intent = Intent(context, EmbeddedPushService::class.java).putExtra(EXTRA_REPLAY, replay)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

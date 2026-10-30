@@ -31,3 +31,8 @@ class RecordingPushDelegate : PushDelegate {
 
     fun drain(): Map<String, Int> = outcomes.toMap().also { outcomes.clear() }
 }
+
+internal fun UnifiedPushStateStore.markEmbedded() {
+    activeProvider = PushProvider.EMBEDDED
+    distributor = NotificationPlugin.EMBEDDED_DISTRIBUTOR
+}

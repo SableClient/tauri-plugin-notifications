@@ -57,7 +57,7 @@ class EmbeddedPushAlarmTest {
 
     @Test
     fun anAlarmWithoutAnEndpointDoesNotStartTheService() {
-        UnifiedPushStateStore(context).activeProvider = "embedded"
+        UnifiedPushStateStore(context).markEmbedded()
 
         EmbeddedPushAlarm.onAlarm(context)
 
@@ -67,7 +67,7 @@ class EmbeddedPushAlarmTest {
     @Test
     fun anAlarmForTheEmbeddedDistributorRestartsTheService() {
         val state = UnifiedPushStateStore(context)
-        state.activeProvider = "embedded"
+        state.markEmbedded()
         state.endpoint = ENDPOINT
 
         EmbeddedPushAlarm.onAlarm(context)

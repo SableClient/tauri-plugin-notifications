@@ -50,7 +50,7 @@ internal object EmbeddedPushAlarm {
 
     fun onAlarm(context: Context) {
         val state = UnifiedPushStateStore(context)
-        if (state.activeProvider != "embedded") return
+        if (!state.isEmbeddedActive) return
         if (EmbeddedPushEndpoint.webSocketUrlForEndpoint(state.endpoint) == null) return
 
         try {

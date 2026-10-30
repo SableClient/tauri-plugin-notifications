@@ -25,7 +25,7 @@ class EmbeddedPushMessageTest {
     fun setup() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         state = UnifiedPushStateStore(activity)
-        state.activeProvider = "embedded"
+        state.markEmbedded()
         state.activeInstance = UnifiedPushStateStore.INSTANCE
         plugin = spyk(NotificationPlugin(activity))
         setListenerActive(true)

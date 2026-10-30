@@ -23,12 +23,12 @@ internal class UnifiedPushStateStore(private val context: Context) {
   )
 
   var activeProvider: String?
-    get() = prefs.getString("push-provider", null)?.takeUnless { it == "none" }
+    get() = prefs.getString("push-provider", null)?.takeUnless { it == PushProvider.NONE }
       ?: if (!prefs.contains("push-provider") && UnifiedPush.getSavedDistributor(context) != null) "unifiedpush" else null
-    set(value) = prefs.edit().putString("push-provider", value ?: "none").apply()
+    set(value) = prefs.edit().putString("push-provider", value ?: PushProvider.NONE).apply()
   var activeInstance: String?
     get() = prefs.getString("push-instance", null)
-      ?: if (activeProvider == "unifiedpush") INSTANCE else null
+      ?: if (activeProvider == PushProvider.UNIFIED_PUSH) INSTANCE else null
     set(value) = prefs.edit().putString("push-instance", value ?: INSTANCE).apply()
   var endpoint: String?
     get() = prefs.getString("up-endpoint", null)
@@ -43,10 +43,13 @@ internal class UnifiedPushStateStore(private val context: Context) {
     get() = prefs.getString("up-distributor", null)
     set(value) = prefs.edit().putString("up-distributor", value).apply()
 
+  val isEmbeddedActive: Boolean
+    get() = activeProvider == PushProvider.EMBEDDED && distributor == NotificationPlugin.EMBEDDED_DISTRIBUTOR
+
   fun acceptsUnifiedPush(instance: String): Boolean =
     instance == activeInstance &&
-      (activeProvider == "unifiedpush" ||
-        (activeProvider == "fcm" && distributor == context.packageName))
+      (activeProvider == PushProvider.UNIFIED_PUSH ||
+        (activeProvider == PushProvider.FCM && distributor == context.packageName))
 
   var vapid: String?
     get() = prefs.getString("up-vapid", null)
@@ -121,7 +124,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
 
   fun clearRegistration(clearProvider: Boolean = false) = synchronized(REPLAY_LOCK) {
     prefs.edit()
-      .also { if (clearProvider) it.putString("push-provider", "none") }
+      .also { if (clearProvider) it.putString("push-provider", PushProvider.NONE) }
       .remove("push-instance")
       .remove("up-endpoint")
       .remove("up-p256dh")
@@ -151,7 +154,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
 
   fun restoreRegistration(registration: Registration) = synchronized(REPLAY_LOCK) {
     prefs.edit()
-      .putString("push-provider", registration.activeProvider ?: "none")
+      .putString("push-provider", registration.activeProvider ?: PushProvider.NONE)
       .putString("push-instance", registration.activeInstance ?: INSTANCE)
       .also { edit ->
         mapOf(
@@ -189,7 +192,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
   }
   /** The in-app FCM distributor also completes through the UnifiedPush callback. */
   fun setUnifiedPushActive(provider: String) {
-    activeProvider = if (provider == "fcm") "fcm" else "unifiedpush"
+    activeProvider = if (provider == PushProvider.FCM) PushProvider.FCM else PushProvider.UNIFIED_PUSH
   }
 
   companion object {

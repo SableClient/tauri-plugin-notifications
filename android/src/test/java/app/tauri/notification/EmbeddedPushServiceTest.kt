@@ -54,7 +54,7 @@ class EmbeddedPushServiceTest {
         PushDelegates.override(delegate)
         service = Robolectric.buildService(EmbeddedPushService::class.java).create().get()
         state = UnifiedPushStateStore(service)
-        state.activeProvider = "embedded"
+        state.markEmbedded()
         state.endpoint = endpoint
         state.prepareEmbeddedReplay(endpoint, true)
         plugin = mockk(relaxed = true)

@@ -481,8 +481,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
     val args = invoke.parseArgs(RegisterPushArgs::class.java)
     val requestedVapid = args.vapid
-    val provider = args.provider ?: "auto"
-    if (provider !in setOf("auto", "fcm", "unifiedpush", "embedded")) {
+    val provider = args.provider ?: PushProvider.AUTO
+    if (provider !in setOf(PushProvider.AUTO, PushProvider.FCM, PushProvider.UNIFIED_PUSH, PushProvider.EMBEDDED)) {
       invoke.reject("Unknown push provider: $provider")
       return
     }
@@ -492,7 +492,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
     // Both transports now run through UnifiedPush and are told apart by their distributor,
     // so switching between them is a re-registration rather than a conflict.
-    val distributor = if (provider == "fcm") null else UnifiedPush.getSavedDistributor(activity)
+    val distributor = if (provider == PushProvider.FCM) null else UnifiedPush.getSavedDistributor(activity)
 
     val user = args.userId?.takeIf { it.isNotEmpty() }
     val device = args.deviceId?.takeIf { it.isNotEmpty() }
@@ -539,9 +539,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val webPushVapid = registration.vapid
     // Re-read: the saved distributor may be gone, in which case register() sends
     // no broadcast and we'd wait out the timeout. Fall through to selection.
-    val nativeAvailable = registration.provider in setOf("auto", "fcm") && FcmBridge.isAvailable(activity)
-    val nativeSelected = registration.provider == "fcm" ||
-      (registration.provider == "auto" && !unifiedPushState.useEmbeddedDistributor &&
+    val nativeAvailable = registration.provider in setOf(PushProvider.AUTO, PushProvider.FCM) && FcmBridge.isAvailable(activity)
+    val nativeSelected = registration.provider == PushProvider.FCM ||
+      (registration.provider == PushProvider.AUTO && !unifiedPushState.useEmbeddedDistributor &&
         nativeAvailable && (UnifiedPush.getSavedDistributor(activity) == null ||
           UnifiedPush.getSavedDistributor(activity) == activity.packageName))
     if (nativeSelected) {
@@ -568,8 +568,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
 
     // Checked before any installed distributor: the user asked for this one explicitly.
-    if (registration.provider == "embedded" ||
-      (registration.provider != "fcm" && unifiedPushState.useEmbeddedDistributor)) {
+    if (registration.provider == PushProvider.EMBEDDED ||
+      (registration.provider != PushProvider.FCM && unifiedPushState.useEmbeddedDistributor)) {
       if (!startEmbeddedPushRegistration(registration)) {
         finishPushRegistrationError(
           "The built-in distributor needs a gateway; set the built-in distributor server first"
@@ -579,8 +579,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
 
     var savedDistributor =
-      if (registration.provider == "fcm") null else UnifiedPush.getSavedDistributor(activity)
-    if (registration.provider == "auto" && !nativeAvailable) {
+      if (registration.provider == PushProvider.FCM) null else UnifiedPush.getSavedDistributor(activity)
+    if (registration.provider == PushProvider.AUTO && !nativeAvailable) {
       savedDistributor = savedDistributor?.takeUnless { it == activity.packageName }
         ?: UnifiedPush.getDistributors(activity).firstOrNull { it != activity.packageName }
       if (savedDistributor == null) {
@@ -592,7 +592,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       UnifiedPush.saveDistributor(activity, savedDistributor)
     }
     registration.distributor = savedDistributor
-    if (registration.provider != "fcm" && savedDistributor != null) {
+    if (registration.provider != PushProvider.FCM && savedDistributor != null) {
       registration.phase = PushRegistrationPhase.UNIFIED_PUSH
       try {
         UnifiedPush.register(activity, registration.instance!!, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
@@ -602,13 +602,13 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    if (webPushVapid != null && (registration.provider == "unifiedpush" || registration.provider == "auto")) {
+    if (webPushVapid != null && (registration.provider == PushProvider.UNIFIED_PUSH || registration.provider == PushProvider.AUTO)) {
       registration.phase = PushRegistrationPhase.DISTRIBUTOR
       try {
         UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { success ->
           if (pendingPushRegistration !== registration) return@tryUseCurrentOrDefaultDistributor
           if (!success) {
-            if (registration.provider != "auto" || !startEmbeddedPushRegistration(registration)) {
+            if (registration.provider != PushProvider.AUTO || !startEmbeddedPushRegistration(registration)) {
               finishPushRegistrationError("No UnifiedPush distributor available")
             }
             return@tryUseCurrentOrDefaultDistributor
@@ -627,7 +627,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    if (registration.provider != "fcm" && UnifiedPush.getSavedDistributor(activity) != null) {
+    if (registration.provider != PushProvider.FCM && UnifiedPush.getSavedDistributor(activity) != null) {
       registration.phase = PushRegistrationPhase.UNIFIED_PUSH
       try {
         UnifiedPush.register(activity, registration.instance!!, keyManager = CachedKeyManager.getInstance(activity))
@@ -637,7 +637,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    if (registration.provider == "unifiedpush" || registration.provider == "embedded") {
+    if (registration.provider == PushProvider.UNIFIED_PUSH || registration.provider == PushProvider.EMBEDDED) {
       if (!startEmbeddedPushRegistration(registration)) {
         finishPushRegistrationError("No UnifiedPush distributor available")
       }
@@ -646,7 +646,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
     fcmToken?.let {
       FcmBridge.useEmbeddedDelivery(activity, false)
-      unifiedPushState.activeProvider = "fcm"
+      unifiedPushState.activeProvider = PushProvider.FCM
       val result = JSObject()
       result.put("deviceToken", it)
       finishPushRegistrationSuccess(result)
@@ -682,7 +682,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.p256dh = keys?.p256dh
     unifiedPushState.auth = keys?.auth
     unifiedPushState.distributor = EMBEDDED_DISTRIBUTOR
-    unifiedPushState.activeProvider = "embedded"
+    unifiedPushState.activeProvider = PushProvider.EMBEDDED
     unifiedPushState.activeInstance = UnifiedPushStateStore.INSTANCE
 
     EmbeddedPushService.start(activity)
@@ -692,7 +692,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   internal fun onEmbeddedPushReady(endpoint: String) {
     val registration = pendingPushRegistration ?: return
     if (registration.phase != PushRegistrationPhase.EMBEDDED ||
-        unifiedPushState.activeProvider != "embedded" ||
+        unifiedPushState.activeProvider != PushProvider.EMBEDDED ||
         unifiedPushState.endpoint != endpoint) return
 
     val p256dh = unifiedPushState.p256dh
@@ -738,15 +738,15 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    if (unifiedPushState.activeProvider == "embedded") {
+    if (unifiedPushState.activeProvider == PushProvider.EMBEDDED) {
       unifiedPushState.clearRegistration(clearProvider = true)
       invoke.resolve()
       return
     }
 
-    val embeddedFcm = unifiedPushState.activeProvider == "fcm" &&
+    val embeddedFcm = unifiedPushState.activeProvider == PushProvider.FCM &&
       unifiedPushState.distributor == activity.packageName
-    if (pendingUnifiedPush != null || unifiedPushState.activeProvider == "unifiedpush" || embeddedFcm) {
+    if (pendingUnifiedPush != null || unifiedPushState.activeProvider == PushProvider.UNIFIED_PUSH || embeddedFcm) {
       try {
         retireUnifiedPush(instanceToUnregister, strict = true)
       } catch (error: Exception) {
@@ -765,7 +765,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
         return@deleteToken
       }
       fcmToken = null
-      if (unifiedPushState.activeProvider == "fcm") unifiedPushState.activeProvider = null
+      if (unifiedPushState.activeProvider == PushProvider.FCM) unifiedPushState.activeProvider = null
       invoke.resolve()
     }
   }
@@ -835,7 +835,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       // here would also wipe it, since unregister() drops every distributor
       // once the last instance is removed.
       unifiedPushGeneration++
-      if (unifiedPushState.activeProvider in setOf("unifiedpush", "embedded")) {
+      if (unifiedPushState.activeProvider in setOf(PushProvider.UNIFIED_PUSH, PushProvider.EMBEDDED)) {
         unifiedPushState.activeProvider = null
       }
       unifiedPushState.clearRegistration()
@@ -869,7 +869,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
     val distributor = registration.distributor ?: UnifiedPush.getSavedDistributor(activity)
     FcmBridge.useEmbeddedDelivery(activity, distributor == activity.packageName)
-    unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) "fcm" else registration.provider)
+    unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) PushProvider.FCM else registration.provider)
     unifiedPushState.endpoint = endpoint
     unifiedPushState.activeInstance = registration.instance
     unifiedPushState.p256dh = p256dh
@@ -911,7 +911,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   fun onUnifiedPushMessage(content: String, instance: String): Boolean {
     if (instance != unifiedPushState.activeInstance) return false
-    if (!unifiedPushState.acceptsUnifiedPush(instance) && unifiedPushState.activeProvider != "embedded") return false
+    if (!unifiedPushState.acceptsUnifiedPush(instance) && unifiedPushState.activeProvider != PushProvider.EMBEDDED) return false
     if (!hasPushMessageListener) {
       // UnifiedPushReceiver already posted the native notification; without a
       // JS push-message listener attached yet, the event would be lost, so
@@ -963,7 +963,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       }
       if (outcome is FcmTokenResult.Success) {
         fcmToken = outcome.token
-        unifiedPushState.activeProvider = "fcm"
+        unifiedPushState.activeProvider = PushProvider.FCM
         val result = JSObject()
         result.put("deviceToken", outcome.token)
         finishPushRegistrationSuccess(result)
@@ -987,7 +987,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       EmbeddedPushService.stop(activity)
       if (restoreEmbeddedRegistration) {
         unifiedPushState.restoreRegistration(it)
-        if (it.activeProvider == "embedded") EmbeddedPushService.start(activity)
+        if (it.activeProvider == PushProvider.EMBEDDED) EmbeddedPushService.start(activity)
       } else {
         unifiedPushState.clearRegistration(clearProvider = true)
       }
@@ -1017,7 +1017,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private fun awaitLateEndpoint(registration: PushRegistration) {
     val distributor = registration.distributor ?: UnifiedPush.getSavedDistributor(activity)
     unifiedPushState.activeInstance = registration.instance
-    unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) "fcm" else registration.provider)
+    unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) PushProvider.FCM else registration.provider)
     unifiedPushState.distributor = distributor
   }
 
@@ -1029,9 +1029,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val activeInstance = unifiedPushState.activeInstance
     val retiresActiveInstance = activeInstance == instance ||
       (activeInstance == null && instance == UnifiedPushStateStore.INSTANCE &&
-        unifiedPushState.activeProvider == "unifiedpush")
+        unifiedPushState.activeProvider == PushProvider.UNIFIED_PUSH)
     if (retiresActiveInstance) {
-      if (unifiedPushState.activeProvider == "unifiedpush") unifiedPushState.activeProvider = null
+      if (unifiedPushState.activeProvider == PushProvider.UNIFIED_PUSH) unifiedPushState.activeProvider = null
       unifiedPushState.clearRegistration()
     }
   }
@@ -1040,7 +1040,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun handleNewToken(token: String) {
     if (!BuildConfig.ENABLE_PUSH_NOTIFICATIONS) return
 
-    if (unifiedPushState.activeProvider != "fcm" || unifiedPushState.distributor == activity.packageName) return
+    if (unifiedPushState.activeProvider != PushProvider.FCM || unifiedPushState.distributor == activity.packageName) return
     fcmToken = token
     // Trigger push-token event to notify the frontend about the token
     val data = JSObject()
@@ -1052,7 +1052,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   // Called by TauriFirebaseMessagingService when a push message is received
   fun triggerPushMessage(pushData: Map<String, Any>) {
     if (!BuildConfig.ENABLE_PUSH_NOTIFICATIONS) return
-    if (unifiedPushState.activeProvider != "fcm") return
+    if (unifiedPushState.activeProvider != PushProvider.FCM) return
 
     val data = JSObject()
     for ((key, value) in pushData) {
@@ -1132,7 +1132,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val args = invoke.parseArgs(SetPushMessageListenerActiveArgs::class.java)
     val becameActive = args.active && !hasPushMessageListener
     hasPushMessageListener = args.active
-    if (becameActive && unifiedPushState.activeProvider == "embedded") {
+    if (becameActive && unifiedPushState.activeProvider == PushProvider.EMBEDDED) {
       EmbeddedPushService.start(activity, replay = true)
     }
     invoke.resolve()
@@ -1165,8 +1165,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val data = JSObject()
     provider?.let { data.put("provider", it) }
     val distributor = when (provider) {
-      "embedded" -> EMBEDDED_DISTRIBUTOR
-      "unifiedpush" -> UnifiedPush.getSavedDistributor(activity)
+      PushProvider.EMBEDDED -> EMBEDDED_DISTRIBUTOR
+      PushProvider.UNIFIED_PUSH -> UnifiedPush.getSavedDistributor(activity)
       else -> null
     }
     distributor?.let { data.put("distributor", it) }
