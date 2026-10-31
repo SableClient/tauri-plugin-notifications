@@ -99,6 +99,7 @@ dependencies {
     implementation("com.google.crypto.tink:tink:1.23.0")
     "gmsImplementation"("org.unifiedpush.android:embedded-fcm-distributor:3.1.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("androidx.work:work-testing:2.11.2")
     testImplementation("io.mockk:mockk-android:1.14.11")
     testImplementation("io.mockk:mockk-agent:1.14.11")
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.3.0")

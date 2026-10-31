@@ -152,6 +152,7 @@ class EmbeddedPushService : Service() {
             return START_NOT_STICKY
         }
 
+        EmbeddedPushWatchdog.ensure(this)
         val nextSubscription = Subscription(nextEndpoint!!, state.pushUserId, state.pushDeviceId)
         if (activeSubscription != nextSubscription) {
             activeSubscription = nextSubscription

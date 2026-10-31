@@ -28,11 +28,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import androidx.work.testing.WorkManagerTestInitHelper
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowNetwork
@@ -52,6 +54,7 @@ class EmbeddedPushServiceTest {
     @Before
     fun setup() {
         PushDelegates.override(delegate)
+        WorkManagerTestInitHelper.initializeTestWorkManager(RuntimeEnvironment.getApplication())
         service = Robolectric.buildService(EmbeddedPushService::class.java).create().get()
         state = UnifiedPushStateStore(service)
         state.markEmbedded()

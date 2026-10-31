@@ -1,11 +1,13 @@
 package app.tauri.notification
 
 import kotlin.test.assertNotNull
+import androidx.work.testing.WorkManagerTestInitHelper
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -18,6 +20,7 @@ class EmbeddedPushServiceLegacyApiTest {
     @Before
     fun setup() {
         PushDelegates.override(RecordingPushDelegate())
+        WorkManagerTestInitHelper.initializeTestWorkManager(RuntimeEnvironment.getApplication())
         service = Robolectric.buildService(EmbeddedPushService::class.java).create().get()
         UnifiedPushStateStore(service).apply {
             markEmbedded()
