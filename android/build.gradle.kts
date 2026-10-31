@@ -86,18 +86,18 @@ dependencies {
     implementation("com.google.android.material:material:1.14.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
-    "gmsImplementation"(platform("com.google.firebase:firebase-bom:34.16.0"))
-    "gmsImplementation"("com.google.firebase:firebase-messaging-ktx:24.1.2")
-    implementation("com.squareup.okhttp3:okhttp:5.3.2")
-    implementation("org.unifiedpush.android:connector:3.3.3")
+    "gmsImplementation"(platform("com.google.firebase:firebase-bom:35.1.0"))
+    "gmsImplementation"("com.google.firebase:firebase-messaging")
+    implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    implementation("org.unifiedpush.android:connector:3.3.5")
     // The connector declares Tink as a runtime-only dependency, so its WebPush
     // classes (`apps.fixed_webpush`) would not be on our compile classpath;
     // depend on the same artifact/version explicitly. Using the plain `tink`
     // artifact (not `tink-android`) keeps a single copy of the classes on the
     // classpath — `tink-android` repackages the same classes and trips AGP's
     // duplicate-class check.
-    implementation("com.google.crypto.tink:tink:1.21.0")
-    "gmsImplementation"("org.unifiedpush.android:embedded-fcm-distributor:3.0.0")
+    implementation("com.google.crypto.tink:tink:1.23.0")
+    "gmsImplementation"("org.unifiedpush.android:embedded-fcm-distributor:3.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk-android:1.14.11")
     testImplementation("io.mockk:mockk-agent:1.14.11")
