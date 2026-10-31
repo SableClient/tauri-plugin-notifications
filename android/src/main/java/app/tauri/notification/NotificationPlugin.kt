@@ -514,7 +514,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       ++unifiedPushGeneration,
       renewsActive = unifiedPushState.endpoint != null && unifiedPushState.acceptsUnifiedPush(instance),
     )
-    schedulePushRegistrationTimeout()
 
     // First check if notifications are enabled
     if (!manager.areNotificationsEnabled()) {
@@ -539,6 +538,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   private fun proceedPushRegistration() {
     val registration = pendingPushRegistration ?: return
+    // Started only now so the permission prompt, which waits on the user, cannot use it up.
+    schedulePushRegistrationTimeout()
     val pushInstance = checkNotNull(registration.instance)
     val webPushVapid = registration.vapid
     // Re-read: the saved distributor may be gone, in which case register() sends

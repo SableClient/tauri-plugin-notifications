@@ -110,4 +110,26 @@ class UnifiedPushRegistrationTimeoutTest {
         assertEquals("unifiedpush", state.activeProvider)
         verify { plugin.trigger("push-token", match<JSObject> { it.getBoolean("rotated") == true }) }
     }
+
+    @Test
+    fun theTimeoutWaitsForThePermissionPrompt() {
+        val manager = mockk<TauriNotificationManager>()
+        every { manager.areNotificationsEnabled() } returns false
+        NotificationPlugin::class.java.getDeclaredField("manager").apply {
+            isAccessible = true
+            set(plugin, manager)
+        }
+        every { plugin["requestPermissionForAlias"](any<String>(), any<Invoke>(), any<String>()) } returns Unit
+
+        plugin.registerForPushNotifications(invoke)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMinutes(2))
+        verify(exactly = 0) { invoke.reject(any<String>()) }
+
+        every { manager.areNotificationsEnabled() } returns true
+        NotificationPlugin::class.java.getDeclaredMethod("pushPermissionsCallback", Invoke::class.java).apply {
+            isAccessible = true
+            invoke(plugin, invoke)
+        }
+        verify(exactly = 1) { UnifiedPush.register(any(), any(), any(), any(), any()) }
+    }
 }
