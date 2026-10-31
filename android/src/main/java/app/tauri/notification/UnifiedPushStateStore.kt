@@ -1,6 +1,8 @@
 package app.tauri.notification
 
 import android.content.Context
+import android.util.Log
+import org.json.JSONException
 import org.json.JSONObject
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.UUID
@@ -118,7 +120,8 @@ internal class UnifiedPushStateStore(private val context: Context) {
 
   private fun completedEmbeddedPushes(): JSONObject = try {
     JSONObject(prefs.getString("up-replay-completed", "{}") ?: "{}")
-  } catch (_: Exception) {
+  } catch (error: JSONException) {
+    Log.w(TAG, "Completed push ids are unreadable; starting over", error)
     JSONObject()
   }
 
@@ -180,7 +183,11 @@ internal class UnifiedPushStateStore(private val context: Context) {
   fun instanceForRegistration(): String {
     val current = activeInstance
     if (current != null && current != INSTANCE) {
-      try { UnifiedPush.unregister(context, current, CachedKeyManager.getInstance(context)) } catch (_: Exception) {}
+      try {
+        UnifiedPush.unregister(context, current, CachedKeyManager.getInstance(context))
+      } catch (error: RuntimeException) {
+        Log.w(TAG, "Could not unregister the previous instance $current", error)
+      }
       activeInstance = INSTANCE
     }
     return INSTANCE
@@ -196,6 +203,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
   }
 
   companion object {
+    private const val TAG = "UnifiedPushStateStore"
     const val INSTANCE = "default"
     private val REPLAY_LOCK = Any()
     private const val REPLAY_RETENTION_MS = 24 * 60 * 60 * 1000L

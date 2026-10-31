@@ -10,8 +10,12 @@ class RecordingPushDelegate : PushDelegate {
     var scheduleFailure: Exception? = null
     var onRender: () -> Unit = {}
 
-    override fun isActivation(payload: String): Boolean =
-        runCatching { JSONObject(payload).optString("ack_token").isNotEmpty() }.getOrDefault(false)
+    var onIsActivation: () -> Unit = {}
+
+    override fun isActivation(payload: String): Boolean {
+        onIsActivation()
+        return runCatching { JSONObject(payload).optString("ack_token").isNotEmpty() }.getOrDefault(false)
+    }
 
     override fun render(context: Context, payload: String) {
         onRender()

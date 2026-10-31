@@ -3,6 +3,7 @@ package app.tauri.notification
 import android.util.Base64
 import java.security.SecureRandom
 import java.util.Locale
+import org.json.JSONException
 import org.json.JSONObject
 
 internal object EmbeddedPushEndpoint {
@@ -62,7 +63,7 @@ internal object EmbeddedPushEndpoint {
     fun pushBody(frame: String): ByteArray? {
         val json = try {
             JSONObject(frame)
-        } catch (_: Exception) {
+        } catch (_: JSONException) {
             return null
         }
         if (json.optString("event") != "message") return null

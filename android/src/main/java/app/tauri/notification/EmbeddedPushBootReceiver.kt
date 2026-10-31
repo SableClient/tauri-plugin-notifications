@@ -9,10 +9,6 @@ class EmbeddedPushBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
 
-        val state = UnifiedPushStateStore(context)
-        if (!state.isEmbeddedActive) return
-        if (EmbeddedPushEndpoint.webSocketUrlForEndpoint(state.endpoint) == null) return
-
-        EmbeddedPushService.start(context)
+        EmbeddedPushAlarm.restartService(context)
     }
 }

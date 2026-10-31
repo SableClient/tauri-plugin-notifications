@@ -137,7 +137,7 @@ class EmbeddedPushServiceTest {
 
     @Test
     fun decryptsWebPushBytesReceivedOverWebSocket() {
-        val keys = EmbeddedWebPushKeys.publicKeys(service)!!
+        val keys = publishKeys()
         val flags = Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
         val body = """{"app_id":"app","ack_token":"activation-token"}"""
         val sealed = WebPushHybridEncrypt.Builder()
@@ -174,7 +174,7 @@ class EmbeddedPushServiceTest {
     }
 
     private fun deliverMatrixPush(id: String = "matrix-event"): String {
-        val keys = EmbeddedWebPushKeys.publicKeys(service)!!
+        val keys = publishKeys()
         val flags = Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
         val body = org.json.JSONObject()
             .put("user_id", "@alice:example.org")
@@ -199,6 +199,13 @@ class EmbeddedPushServiceTest {
         frame(0, """{"event":"message","id":"$id","time":200,"encoding":"base64","message":"$encoded"}""")
 
         return body
+    }
+
+    private fun publishKeys(): EmbeddedWebPushKeys.PublicKeys {
+        val keys = EmbeddedWebPushKeys.publicKeys(service)!!
+        state.p256dh = keys.p256dh
+        state.auth = keys.auth
+        return keys
     }
 
     private fun finishWork() {
@@ -397,7 +404,7 @@ class EmbeddedPushServiceTest {
         start()
         awaitCondition { readyCount.get() == 1 }
         service.onDestroy()
-        val keys = EmbeddedWebPushKeys.publicKeys(service)!!
+        val keys = publishKeys()
         val flags = Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
         val publisher = OkHttpClient()
         try {
@@ -510,23 +517,162 @@ class EmbeddedPushServiceTest {
     }
 
     @Test
-    fun transientDecryptionFailureRemainsRetryable() {
+    fun undecryptableMessageIsCompletedSoItDoesNotReplay() {
+        publishKeys()
         start()
         frame(0, """{"event":"open","time":100}""")
         val sealed = """{"event":"message","id":"A","time":200,"encoding":"base64","message":"AQID"}"""
-        mockkObject(EmbeddedWebPushKeys)
-        try {
-            every { EmbeddedWebPushKeys.decrypt(any(), any()) } returns null
-            frame(0, sealed)
-            assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
-            every { EmbeddedWebPushKeys.decrypt(any(), any()) } returns
-                """{"app_id":"app","ack_token":"A"}""".toByteArray()
-            frame(0, sealed)
-            assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
-            verify(exactly = 1) { plugin.onUnifiedPushMessage(any(), any()) }
-        } finally {
-            unmockkObject(EmbeddedWebPushKeys)
+
+        frame(0, sealed)
+
+        assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+        verify(exactly = 0) { plugin.onUnifiedPushMessage(any(), any()) }
+        assertEquals(1, delegate.drain()["EMBEDDED_DECRYPT_FAILED"])
+    }
+
+    @Test
+    fun plaintextIsRejectedWhenKeysWerePublished() {
+        publishKeys()
+        start()
+        frame(0, """{"event":"open","time":100}""")
+
+        frame(0, message("A"))
+
+        verify(exactly = 0) { plugin.onUnifiedPushMessage(any(), any()) }
+        assertEquals(emptyList(), delegate.rendered)
+    }
+
+    @Test
+    fun plaintextIsAcceptedWhenNoKeysWerePublished() {
+        start()
+        frame(0, """{"event":"open","time":100}""")
+
+        frame(0, message("A"))
+
+        verify(exactly = 1) { plugin.onUnifiedPushMessage(any(), any()) }
+    }
+
+    @Test
+    fun renderFailureRetriesThenGivesUp() {
+        delegate.onRender = { throw IllegalStateException("render") }
+        start()
+        frame(0, """{"event":"open","time":100}""")
+
+        frame(0, message("A"))
+        assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+        frame(0, message("A"))
+        assertEquals(true, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+        frame(0, message("A"))
+
+        assertEquals(false, state.shouldProcessEmbeddedPush(endpoint, "A", 200))
+    }
+
+    @Test
+    fun failureOutsideTheTryDoesNotKillTheExecutorOrLeakInFlight() {
+        start()
+        frame(0, """{"event":"open","time":100}""")
+        val broken = RecordingPushDelegate().apply { onIsActivation = { throw IllegalStateException("boom") } }
+        PushDelegates.override(broken)
+
+        frame(0, message("A"))
+        PushDelegates.override(delegate)
+        frame(0, message("B"))
+
+        verify(exactly = 1) { plugin.onUnifiedPushMessage(any(), any()) }
+    }
+
+    @Test
+    fun holdsAWakeLockWhileAMessageIsProcessed() {
+        start()
+        frame(0, """{"event":"open","time":100}""")
+        val executor = EmbeddedPushService::class.java.getDeclaredField("pushExecutor").run {
+            isAccessible = true
+            get(service) as ExecutorService
         }
+        val release = CountDownLatch(1)
+        executor.submit { release.await(5, TimeUnit.SECONDS) }
+        val (socket, listener) = connections[0]
+        listener.onMessage(socket, message("A"))
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val lock = org.robolectric.shadows.ShadowPowerManager.getLatestWakeLock()
+        assertEquals("SableEmbeddedPush:Processing", shadowOf(lock).tag)
+        assertTrue(lock.isHeld)
+
+        release.countDown()
+        finishWork()
+        assertEquals(false, lock.isHeld)
+    }
+
+    @Test
+    fun reconnectsWhenTheGatewayNeverSendsOpen() {
+        start()
+        assertEquals(1, connections.size)
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(31))
+        verify { connections[0].first.cancel() }
+        assertEquals(1, scheduledAlarmCount())
+
+        start()
+        assertEquals(2, connections.size)
+    }
+
+    @Test
+    fun readyConnectionIsNotDroppedByTheConnectTimeout() {
+        start()
+        frame(0, """{"event":"open","time":100}""")
+
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(31))
+
+        verify(exactly = 0) { connections[0].first.cancel() }
+    }
+
+    @Test
+    fun anAlarmPokesTheRunningServiceInsteadOfStartingOne() {
+        start()
+        val (socket, listener) = connections[0]
+        listener.onFailure(socket, IOException("offline"), null)
+        shadowOf(Looper.getMainLooper()).idle()
+        shadowOf(service).nextStartedService
+
+        EmbeddedPushAlarm.onAlarm(service)
+
+        assertEquals(2, connections.size)
+        assertEquals(null, shadowOf(service).nextStartedService)
+    }
+
+    @Test
+    fun aRefusedStartIsRescheduledWithBackoff() {
+        service.onDestroy()
+        val refusing = spyk(service.applicationContext)
+        every { refusing.startForegroundService(any()) } throws
+            ForegroundServiceStartNotAllowedException("background")
+        state.endpoint = endpoint
+
+        EmbeddedPushAlarm.onAlarm(refusing)
+
+        assertEquals(1, scheduledAlarmCount())
+        assertEquals(1, delegate.drain()["EMBEDDED_SOCKET_FAILED"])
+    }
+
+    @Test
+    fun startReportsARefusal() {
+        val refusing = spyk(service.applicationContext)
+        every { refusing.startForegroundService(any()) } throws
+            ForegroundServiceStartNotAllowedException("background")
+
+        assertEquals(false, EmbeddedPushService.start(refusing))
+    }
+
+    @Test
+    fun keepsConnectingWhenForegroundIsRefusedOnStart() {
+        val refusing = spyk(service)
+        every { refusing.startForeground(any(), any(), any<Int>()) } throws
+            ForegroundServiceStartNotAllowedException("background")
+
+        refusing.onStartCommand(null, 0, 1)
+
+        assertEquals(1, connections.size)
     }
 
     @Test

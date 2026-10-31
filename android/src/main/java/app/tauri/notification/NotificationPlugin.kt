@@ -165,9 +165,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private var pendingIntent: Intent? = null
 
   companion object {
+    @Volatile
     var instance: NotificationPlugin? = null
 
     const val EMBEDDED_DISTRIBUTOR = "embedded-websocket"
+    private const val EMBEDDED_START_RETRY_MS = 60_000L
 
     fun triggerNotification(notification: Notification, source: String = "local") {
       val data = JSObject()
@@ -240,6 +242,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   }
 
   internal fun onWebViewGone() {
+    if (instance === this) instance = null
     hasClickedListener = false
     hasActionListener = false
     hasPushMessageListener = false
@@ -536,6 +539,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   private fun proceedPushRegistration() {
     val registration = pendingPushRegistration ?: return
+    val pushInstance = checkNotNull(registration.instance)
     val webPushVapid = registration.vapid
     // Re-read: the saved distributor may be gone, in which case register() sends
     // no broadcast and we'd wait out the timeout. Fall through to selection.
@@ -557,7 +561,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
         UnifiedPush.saveDistributor(activity, activity.packageName)
         UnifiedPush.register(
           activity,
-          registration.instance!!,
+          pushInstance,
           vapid = webPushVapid,
           keyManager = CachedKeyManager.getInstance(activity),
         )
@@ -595,7 +599,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     if (registration.provider != PushProvider.FCM && savedDistributor != null) {
       registration.phase = PushRegistrationPhase.UNIFIED_PUSH
       try {
-        UnifiedPush.register(activity, registration.instance!!, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
+        UnifiedPush.register(activity, pushInstance, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
       } catch (error: Exception) {
         finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
       }
@@ -616,7 +620,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
           try {
             registration.distributor = UnifiedPush.getSavedDistributor(activity)
             registration.phase = PushRegistrationPhase.UNIFIED_PUSH
-            UnifiedPush.register(activity, registration.instance!!, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
+            UnifiedPush.register(activity, pushInstance, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
           } catch (error: Exception) {
             finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
           }
@@ -630,7 +634,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     if (registration.provider != PushProvider.FCM && UnifiedPush.getSavedDistributor(activity) != null) {
       registration.phase = PushRegistrationPhase.UNIFIED_PUSH
       try {
-        UnifiedPush.register(activity, registration.instance!!, keyManager = CachedKeyManager.getInstance(activity))
+        UnifiedPush.register(activity, pushInstance, keyManager = CachedKeyManager.getInstance(activity))
       } catch (error: Exception) {
         finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
       }
@@ -685,8 +689,14 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.activeProvider = PushProvider.EMBEDDED
     unifiedPushState.activeInstance = UnifiedPushStateStore.INSTANCE
 
-    EmbeddedPushService.start(activity)
+    startEmbeddedService()
     return true
+  }
+
+  private fun startEmbeddedService(replay: Boolean = false) {
+    if (EmbeddedPushService.start(activity, replay)) return
+    PushDelegates.get(activity).record(activity, "EMBEDDED_SOCKET_FAILED")
+    EmbeddedPushAlarm.schedule(activity, EMBEDDED_START_RETRY_MS)
   }
 
   internal fun onEmbeddedPushReady(endpoint: String) {
@@ -818,8 +828,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       // Drop any installed distributor, or it wins the next registration.
       try {
         UnifiedPush.unregister(activity, UnifiedPushStateStore.INSTANCE, CachedKeyManager.getInstance(activity))
-      } catch (_: Exception) {
+      } catch (error: RuntimeException) {
+        Logger.error(Logger.tags(TAG), "Could not drop the installed distributor", error)
       }
+      EmbeddedPushService.stop(activity)
       unifiedPushState.ensureExplicitInstance()
       invoke.resolve()
       return
@@ -987,7 +999,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       EmbeddedPushService.stop(activity)
       if (restoreEmbeddedRegistration) {
         unifiedPushState.restoreRegistration(it)
-        if (it.activeProvider == PushProvider.EMBEDDED) EmbeddedPushService.start(activity)
+        if (it.activeProvider == PushProvider.EMBEDDED) startEmbeddedService()
       } else {
         unifiedPushState.clearRegistration(clearProvider = true)
       }
@@ -1133,7 +1145,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val becameActive = args.active && !hasPushMessageListener
     hasPushMessageListener = args.active
     if (becameActive && unifiedPushState.activeProvider == PushProvider.EMBEDDED) {
-      EmbeddedPushService.start(activity, replay = true)
+      startEmbeddedService(replay = true)
     }
     invoke.resolve()
   }

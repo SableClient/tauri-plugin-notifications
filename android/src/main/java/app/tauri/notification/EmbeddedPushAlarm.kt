@@ -13,6 +13,11 @@ import androidx.core.app.AlarmManagerCompat
 internal object EmbeddedPushAlarm {
     private const val TAG = "EmbeddedPushAlarm"
     private const val REQUEST_CODE = 0x5AB1F
+    private const val RETRY_BASE_MS = 60_000L
+    private const val RETRY_MAX_MS = 900_000L
+    private const val MAX_RETRY_SHIFT = 4
+
+    @Volatile private var failedStarts = 0
 
     fun schedule(context: Context, delayMs: Long) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -48,17 +53,24 @@ internal object EmbeddedPushAlarm {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-    fun onAlarm(context: Context) {
+    fun onAlarm(context: Context) = restartService(context)
+
+    /** A refused start is retried with backoff, since the alarm that triggered it is spent. */
+    fun restartService(context: Context) {
         val state = UnifiedPushStateStore(context)
         if (!state.isEmbeddedActive) return
         if (EmbeddedPushEndpoint.webSocketUrlForEndpoint(state.endpoint) == null) return
 
-        try {
-            EmbeddedPushService.start(context)
-        } catch (error: Exception) {
-            Log.w(TAG, "Could not restart the push service from an alarm: ${error.message}")
-            PushDelegates.get(context).record(context, "EMBEDDED_SOCKET_FAILED")
+        if (EmbeddedPushService.poke() || EmbeddedPushService.start(context)) {
+            failedStarts = 0
+            return
         }
+
+        PushDelegates.get(context).record(context, "EMBEDDED_SOCKET_FAILED")
+        val delay = (RETRY_BASE_MS shl failedStarts).coerceAtMost(RETRY_MAX_MS)
+        if (failedStarts < MAX_RETRY_SHIFT) failedStarts++
+        Log.w(TAG, "Retrying the push service start in ${delay}ms")
+        schedule(context, delay)
     }
 }
 

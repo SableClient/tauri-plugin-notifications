@@ -334,4 +334,28 @@ class EmbeddedPushRegistrationTest {
         assertEquals("up0123456789ab", state.embeddedTopic)
         verify(exactly = 1) { invoke.resolve(any<JSObject>()) }
     }
+
+    @Test
+    fun selectingTheBuiltInDistributorStopsARunningService() {
+        val application = org.robolectric.RuntimeEnvironment.getApplication()
+        shadowOf(application).clearStartedServices()
+        val selection = mockk<Invoke>(relaxed = true)
+        every { selection.parseArgs(DistributorArgs::class.java) } returns DistributorArgs().apply {
+            distributor = NotificationPlugin.EMBEDDED_DISTRIBUTOR
+        }
+
+        plugin.setDistributor(selection)
+
+        val stopped = shadowOf(application).nextStoppedService
+        assertEquals(EmbeddedPushService::class.java.name, stopped.component?.className)
+    }
+
+    @Test
+    fun forgetsTheInstanceWhenTheWebViewGoes() {
+        NotificationPlugin.instance = plugin
+
+        plugin.onWebViewGone()
+
+        assertEquals(null, NotificationPlugin.instance)
+    }
 }
