@@ -69,4 +69,71 @@ class EmbeddedWebPushKeysTest {
         assertNull(EmbeddedWebPushKeys.decrypt(context, "plain text".toByteArray()))
         assertNull(EmbeddedWebPushKeys.decrypt(context, ByteArray(0)))
     }
+
+    private val keyFile get() = java.io.File(context.noBackupFilesDir, "embedded-webpush-keys.json")
+
+    @Test
+    fun `stores the private key outside of backups`() {
+        assertNotNull(EmbeddedWebPushKeys.publicKeys(context))
+
+        assertEquals(true, keyFile.exists())
+        val legacy = context.getSharedPreferences("embedded-webpush-keys", android.content.Context.MODE_PRIVATE)
+        assertEquals(emptyMap(), legacy.all)
+    }
+
+    @Test
+    fun `migrates keys from the backed up preferences`() {
+        val legacyKeys = org.json.JSONObject(
+            run {
+                assertNotNull(EmbeddedWebPushKeys.publicKeys(context))
+                keyFile.readText()
+            }
+        )
+        keyFile.delete()
+        EmbeddedWebPushKeys.forgetCachedKeys()
+        context.getSharedPreferences("embedded-webpush-keys", android.content.Context.MODE_PRIVATE).edit()
+            .putString("private", legacyKeys.getString("private"))
+            .putString("public", legacyKeys.getString("public"))
+            .putString("auth", legacyKeys.getString("auth"))
+            .commit()
+
+        val keys = assertNotNull(EmbeddedWebPushKeys.publicKeys(context))
+
+        assertEquals(legacyKeys.getString("public"), keys.p256dh)
+        assertEquals(true, keyFile.exists())
+        assertEquals(
+            emptyMap(),
+            context.getSharedPreferences("embedded-webpush-keys", android.content.Context.MODE_PRIVATE).all,
+        )
+    }
+
+    @Test
+    fun `regenerates keys that cannot be decoded`() {
+        keyFile.parentFile!!.mkdirs()
+        keyFile.writeText("""{"private":"!!","public":"!!","auth":"!!"}""")
+        EmbeddedWebPushKeys.forgetCachedKeys()
+
+        val keys = assertNotNull(EmbeddedWebPushKeys.publicKeys(context))
+
+        assertEquals(65, decodeUrl(keys.p256dh).size)
+    }
+
+    @Test
+    fun `concurrent callers share one keypair`() {
+        EmbeddedWebPushKeys.forgetCachedKeys()
+        keyFile.delete()
+        val results = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val start = java.util.concurrent.CountDownLatch(1)
+        val threads = List(8) {
+            Thread {
+                start.await()
+                results.add(assertNotNull(EmbeddedWebPushKeys.publicKeys(context)).p256dh)
+            }.also { it.start() }
+        }
+        start.countDown()
+        threads.forEach { it.join() }
+
+        assertEquals(1, results.toSet().size)
+        assertEquals(results.first(), EmbeddedWebPushKeys.publicKeys(context)!!.p256dh)
+    }
 }
