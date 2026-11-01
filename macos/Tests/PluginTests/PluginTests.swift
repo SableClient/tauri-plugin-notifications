@@ -26,7 +26,7 @@ private func makeTestNotification(
     sound: String? = nil,
     group: String? = nil,
     actionTypeId: String? = nil,
-    extra: [String: String]? = nil,
+    extra: [String: JSONValue]? = nil,
     silent: Bool? = nil
 ) -> PluginNotification {
     return PluginNotification(
@@ -235,8 +235,8 @@ final class NotificationTests: XCTestCase {
         XCTAssertEqual(notification.id, 456)
         XCTAssertEqual(notification.title, "Reminder")
         XCTAssertEqual(notification.body, "Don't forget!")
-        XCTAssertEqual(notification.extra?["key1"], "value1")
-        XCTAssertEqual(notification.extra?["key2"], "value2")
+        XCTAssertEqual(notification.extra?["key1"], .string("value1"))
+        XCTAssertEqual(notification.extra?["key2"], .string("value2"))
         XCTAssertEqual(notification.sound, "notification.wav")
         XCTAssertEqual(notification.group, "reminders")
         XCTAssertEqual(notification.actionTypeId, "reminder_actions")
@@ -825,7 +825,7 @@ final class NotificationContentTests: XCTestCase {
 
     func testMakeNotificationContentWithExtra() throws {
         let notification = makeTestNotification(
-            extra: ["key1": "value1", "key2": "value2"]
+            extra: ["key1": .string("value1"), "key2": .string("value2")]
         )
 
         let content = try makeNotificationContent(notification)
@@ -1289,12 +1289,7 @@ final class NotificationHandlerTests: XCTestCase {
 
     func testSaveAndRetrieveNotification() {
         let notification = makeTestNotification(id: 123, title: "Saved", body: "Body")
-        handler.saveNotification("123", notification)
-
-        // Create a mock request to test retrieval
-        let content = UNMutableNotificationContent()
-        content.title = "Saved"
-        content.body = "Body"
+        let content = try! makeNotificationContent(notification)
         let request = UNNotificationRequest(identifier: "123", content: content, trigger: nil)
 
         let activeNotification = handler.toActiveNotification(request)
@@ -1324,10 +1319,7 @@ final class NotificationHandlerTests: XCTestCase {
     func testToPendingNotificationWithSchedule() {
         let schedule = NotificationSchedule.every(interval: .hour, count: 1)
         let notification = makeTestNotification(id: 456, title: "Scheduled", schedule: schedule)
-        handler.saveNotification("456", notification)
-
-        let content = UNMutableNotificationContent()
-        content.title = "Scheduled"
+        let content = try! makeNotificationContent(notification)
         let request = UNNotificationRequest(identifier: "456", content: content, trigger: nil)
 
         let pendingNotification = handler.toPendingNotification(request)

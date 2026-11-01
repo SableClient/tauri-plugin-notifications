@@ -45,11 +45,52 @@ struct NotificationAttachment: Codable {
   let options: NotificationAttachmentOptions?
 }
 
+enum JSONValue: Decodable, Equatable {
+  case null
+  case bool(Bool)
+  case integer(Int64)
+  case double(Double)
+  case string(String)
+  case array([JSONValue])
+  case object([String: JSONValue])
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if container.decodeNil() {
+      self = .null
+    } else if let value = try? container.decode(Bool.self) {
+      self = .bool(value)
+    } else if let value = try? container.decode(Int64.self) {
+      self = .integer(value)
+    } else if let value = try? container.decode(Double.self) {
+      self = .double(value)
+    } else if let value = try? container.decode(String.self) {
+      self = .string(value)
+    } else if let value = try? container.decode([JSONValue].self) {
+      self = .array(value)
+    } else {
+      self = .object(try container.decode([String: JSONValue].self))
+    }
+  }
+
+  var foundationValue: Any {
+    switch self {
+    case .null: return NSNull()
+    case .bool(let value): return value
+    case .integer(let value): return NSNumber(value: value)
+    case .double(let value): return NSNumber(value: value)
+    case .string(let value): return value
+    case .array(let values): return values.map(\.foundationValue)
+    case .object(let values): return values.mapValues(\.foundationValue)
+    }
+  }
+}
+
 struct Notification: Decodable {
   let id: Int
-  var title: String
+  var title: String?
   var body: String?
-  var extra: [String: String]?
+  var extra: [String: JSONValue]?
   var schedule: NotificationSchedule?
   var attachments: [NotificationAttachment]?
   var sound: String?
@@ -173,9 +214,14 @@ class NotificationPlugin {
 
   #if ENABLE_PUSH_NOTIFICATIONS
     // Push registration state is only touched on the main queue.
-    private var pushTokenCompletions = [(Result<String, Error>) -> Void]()
+    private struct PushTokenWaiter {
+      let id: UInt64
+      let completion: (Result<String, Error>) -> Void
+      let timer: Timer
+    }
+    private var pushTokenWaiters = [PushTokenWaiter]()
+    private var nextPushTokenWaiterId: UInt64 = 0
     private let pushTokenTimeout: TimeInterval = 10.0
-    private var pushTokenTimer: Timer?
   #endif
 
   init() {
@@ -195,7 +241,6 @@ class NotificationPlugin {
     let notification = try args.decode(Notification.self)
 
     let request = try await showNotification(notification: notification)
-    notificationHandler.saveNotification(request.identifier, notification)
     return Int32(request.identifier) ?? -1
   }
 
@@ -318,8 +363,9 @@ class NotificationPlugin {
   public func getActive() async throws(FFIResult) -> String {
     let notifications = await UNUserNotificationCenter.current().deliveredNotifications()
 
-    let ret = notifications.compactMap({ (notification) -> ActiveNotification? in
+    let ret = notifications.map({ (notification) -> ActiveNotification in
       return self.notificationHandler.toActiveNotification(notification.request)
+        ?? self.notificationHandler.toRemoteActionNotification(notification.request)
     })
 
     return try ret.toJSONString()
@@ -348,35 +394,36 @@ class NotificationPlugin {
           return
         }
         AppDelegateSwizzler.swizzlePushCallbacks()
-        self.pushTokenCompletions.append(completion)
-        guard self.pushTokenCompletions.count == 1 else { return }
-
-        self.pushTokenTimer?.invalidate()
-        self.pushTokenTimer = Timer.scheduledTimer(
-          withTimeInterval: self.pushTokenTimeout, repeats: false
-        ) { [weak self] _ in
-          self?.handlePushTokenTimeout()
+        self.nextPushTokenWaiterId += 1
+        let id = self.nextPushTokenWaiterId
+        let timer = Timer.scheduledTimer(withTimeInterval: self.pushTokenTimeout, repeats: false) {
+          [weak self] _ in
+          self?.handlePushTokenTimeout(waiter: id)
         }
+        self.pushTokenWaiters.append(PushTokenWaiter(id: id, completion: completion, timer: timer))
+        guard self.pushTokenWaiters.count == 1 else { return }
 
         NSApplication.shared.registerForRemoteNotifications()
       }
     }
 
-    private func handlePushTokenTimeout() {
-      handlePushTokenError(NSError(
+    private func handlePushTokenTimeout(waiter id: UInt64) {
+      guard let index = pushTokenWaiters.firstIndex(where: { $0.id == id }) else { return }
+      let waiter = pushTokenWaiters.remove(at: index)
+      waiter.completion(.failure(NSError(
         domain: "NotificationPlugin",
         code: -1,
         userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for device token"]
-      ))
+      )))
     }
 
     private func settlePushCompletions(_ result: Result<String, Error>) {
-      pushTokenTimer?.invalidate()
-      pushTokenTimer = nil
-
-      let completions = pushTokenCompletions
-      pushTokenCompletions.removeAll()
-      completions.forEach { $0(result) }
+      let waiters = pushTokenWaiters
+      pushTokenWaiters.removeAll()
+      waiters.forEach {
+        $0.timer.invalidate()
+        $0.completion(result)
+      }
     }
 
     func handlePushTokenReceived(_ token: String) {
@@ -425,7 +472,7 @@ class NotificationPlugin {
 func jsonCompatible(_ value: Any) -> Any {
   switch value {
   case let string as String: return string
-  case let number as NSNumber: return number
+  case let number as NSNumber: return number.doubleValue.isFinite ? number : NSNull()
   case is NSNull: return NSNull()
   case let array as [Any]: return array.map(jsonCompatible)
   case let dictionary as [AnyHashable: Any]:

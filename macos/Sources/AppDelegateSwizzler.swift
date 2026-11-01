@@ -8,6 +8,7 @@ enum AppDelegateSwizzler {
 
   private static var originalIMPs: [Selector: IMP] = [:]
   private static var swizzled = false
+  private static var retainedDelegate: NSApplicationDelegate?
 
   /// Safe to call repeatedly: the app delegate may not be set yet the first time.
   static func swizzlePushCallbacks() {
@@ -36,6 +37,7 @@ enum AppDelegateSwizzler {
       #selector(PushForwarder.ta_application(_:didReceiveRemoteNotification:))
     )
 
+    retainedDelegate = delegate
     // AppKit caches which delegate selectors exist at assignment, so reassign to pick up the new ones.
     NSApplication.shared.delegate = nil
     NSApplication.shared.delegate = delegate

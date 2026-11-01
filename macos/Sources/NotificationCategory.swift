@@ -1,33 +1,46 @@
 import UserNotifications
 
-internal func makeCategories(_ actionTypes: [ActionType]) {
-  var createdCategories = [UNNotificationCategory]()
+private let categoryQueue = DispatchQueue(label: "tauri-plugin-notifications.categories")
 
+func buildCategories(_ actionTypes: [ActionType]) -> [UNNotificationCategory] {
   let generalCategory = UNNotificationCategory(
     identifier: "GENERAL",
     actions: [],
     intentIdentifiers: [],
     options: .customDismissAction)
 
-  createdCategories.append(generalCategory)
-  for type in actionTypes {
-    let newActions = makeActions(type.actions)
+  return [generalCategory]
+    + actionTypes.map { type in
+      UNNotificationCategory(
+        identifier: type.id,
+        actions: makeActions(type.actions),
+        intentIdentifiers: [],
+        hiddenPreviewsBodyPlaceholder: type.hiddenPreviewsBodyPlaceholder
+          ?? type.hiddenBodyPlaceholder ?? "",
+        options: makeCategoryOptions(type))
+    }
+}
 
-    // Create the custom actions for the TIMER_EXPIRED category.
-    var newCategory: UNNotificationCategory?
+func mergeCategories(
+  _ existing: Set<UNNotificationCategory>, _ added: [UNNotificationCategory]
+) -> Set<UNNotificationCategory> {
+  let replaced = Set(added.map(\.identifier))
+  return existing.filter { !replaced.contains($0.identifier) }.union(added)
+}
 
-    newCategory = UNNotificationCategory(
-      identifier: type.id,
-      actions: newActions,
-      intentIdentifiers: [],
-      hiddenPreviewsBodyPlaceholder: type.hiddenBodyPlaceholder ?? "",
-      options: makeCategoryOptions(type))
-
-    createdCategories.append(newCategory!)
-  }
-
+internal func makeCategories(_ actionTypes: [ActionType]) {
+  let created = buildCategories(actionTypes)
   let center = UNUserNotificationCenter.current()
-  center.setNotificationCategories(Set(createdCategories))
+  categoryQueue.async {
+    let semaphore = DispatchSemaphore(value: 0)
+    var existing = Set<UNNotificationCategory>()
+    center.getNotificationCategories {
+      existing = $0
+      semaphore.signal()
+    }
+    semaphore.wait()
+    center.setNotificationCategories(mergeCategories(existing, created))
+  }
 }
 
 func makeActions(_ actions: [Action]) -> [UNNotificationAction] {
@@ -61,28 +74,29 @@ func makeActions(_ actions: [Action]) -> [UNNotificationAction] {
 }
 
 func makeActionOptions(_ action: Action) -> UNNotificationActionOptions {
+  var options: UNNotificationActionOptions = []
   if action.foreground ?? false {
-    return .foreground
+    options.insert(.foreground)
   }
   if action.destructive ?? false {
-    return .destructive
+    options.insert(.destructive)
   }
   if action.requiresAuthentication ?? false {
-    return .authenticationRequired
+    options.insert(.authenticationRequired)
   }
-  return UNNotificationActionOptions(rawValue: 0)
+  return options
 }
 
 func makeCategoryOptions(_ type: ActionType) -> UNNotificationCategoryOptions {
+  var options: UNNotificationCategoryOptions = []
   if type.customDismissAction ?? false {
-    return .customDismissAction
+    options.insert(.customDismissAction)
   }
   if type.hiddenPreviewsShowTitle ?? false {
-    return .hiddenPreviewsShowTitle
+    options.insert(.hiddenPreviewsShowTitle)
   }
   if type.hiddenPreviewsShowSubtitle ?? false {
-    return .hiddenPreviewsShowSubtitle
+    options.insert(.hiddenPreviewsShowSubtitle)
   }
-
-  return UNNotificationCategoryOptions(rawValue: 0)
+  return options
 }

@@ -23,10 +23,20 @@ enum NotificationError: LocalizedError {
   }
 }
 
+let localOriginKey = "__tauriNotificationLocal"
+
+struct LocalOrigin: Codable {
+  var sound: String?
+  var silent: Bool?
+  var schedule: NotificationSchedule?
+  var attachments: [NotificationAttachment]?
+}
+
 func makeNotificationContent(_ notification: Notification) throws -> UNNotificationContent {
   let content = UNMutableNotificationContent()
-  content.title = NSString.localizedUserNotificationString(
-    forKey: notification.title, arguments: nil)
+  if let title = notification.title {
+    content.title = NSString.localizedUserNotificationString(forKey: title, arguments: nil)
+  }
   if let body = notification.body {
     content.body = NSString.localizedUserNotificationString(
       forKey: body,
@@ -40,10 +50,16 @@ func makeNotificationContent(_ notification: Notification) throws -> UNNotificat
   // (whether the notification came from local schedule or remote push).
   if let extra = notification.extra {
     for (key, value) in extra {
-      userInfo[key] = value
+      userInfo[key] = value.foundationValue
     }
   }
 
+  let origin = LocalOrigin(
+    sound: notification.sound, silent: notification.silent, schedule: notification.schedule,
+    attachments: notification.attachments)
+  if let encoded = try? JSONEncoder().encode(origin) {
+    userInfo[localOriginKey] = String(decoding: encoded, as: UTF8.self)
+  }
   content.userInfo = userInfo
 
   if let actionTypeId = notification.actionTypeId {
@@ -93,6 +109,9 @@ func makeAttachments(_ attachments: [NotificationAttachment]) throws -> [UNNotif
 }
 
 func makeAttachmentUrl(_ path: String) -> URL? {
+  if path.hasPrefix("/") {
+    return URL(fileURLWithPath: path)
+  }
   return URL(string: path)
 }
 
@@ -117,17 +136,27 @@ func makeAttachmentOptions(_ options: NotificationAttachmentOptions) -> [AnyHash
   return opts
 }
 
+func parseScheduleDate(_ value: String) -> Date? {
+  var text = value
+  var hasFraction = false
+  if let range = text.range(of: #"\.\d+"#, options: .regularExpression) {
+    hasFraction = true
+    let digits = text[text.index(after: range.lowerBound)..<range.upperBound].prefix(3)
+    text.replaceSubrange(
+      range, with: "." + digits + String(repeating: "0", count: 3 - digits.count))
+  }
+  let formatter = ISO8601DateFormatter()
+  formatter.formatOptions =
+    hasFraction ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+  return formatter.date(from: text)
+}
+
 func handleScheduledNotification(_ schedule: NotificationSchedule) throws
   -> UNNotificationTrigger?
 {
   switch schedule {
   case .at(let date, let repeating):
-    let dateFormatter = DateFormatter()
-    dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-    dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-    dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
-
-    if let at = dateFormatter.date(from: date) {
+    if let at = parseScheduleDate(date) {
       let dateInfo = Calendar.current.dateComponents(in: TimeZone.current, from: at)
 
       if dateInfo.date! < Date() {

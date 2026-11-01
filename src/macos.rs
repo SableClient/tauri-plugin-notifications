@@ -115,16 +115,22 @@ fn bridge_trigger(event: String, payload: String) -> Result<(), ffi::FFIResult> 
         .map_err(|e| ffi::FFIResult::Err(format!("Failed to trigger event '{event}': {e}")))
 }
 
-pub fn init<R: Runtime, C: DeserializeOwned>(
+pub fn init<R: Runtime>(
     app: &AppHandle<R>,
-    _api: PluginApi<R, C>,
+    api: PluginApi<R, Option<crate::PluginConfig>>,
 ) -> crate::Result<Notifications<R>> {
     validation::require_bundle()?;
 
-    Ok(Notifications {
+    let notifications = Notifications {
         app: app.clone(),
         plugin: Arc::new(ffi::NotificationPlugin::init_plugin()),
-    })
+    };
+    if let Some(config) = api.config().as_ref()
+        && !config.action_types.is_empty()
+    {
+        notifications.register_action_types(config.action_types.clone())?;
+    }
+    Ok(notifications)
 }
 
 impl<R: Runtime> crate::NotificationsBuilder<R> {

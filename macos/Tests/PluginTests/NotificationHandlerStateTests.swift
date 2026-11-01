@@ -3,28 +3,6 @@ import UserNotifications
 @testable import tauri_plugin_notifications
 
 final class NotificationHandlerStateTests: XCTestCase {
-  private func saved(_ handler: NotificationHandler, json: String) throws -> UNNotificationRequest {
-    let notification = try JSONDecoder().decode(
-      tauri_plugin_notifications.Notification.self, from: Data(json.utf8))
-    handler.saveNotification("\(notification.id)", notification)
-    return UNNotificationRequest(
-      identifier: "\(notification.id)", content: UNMutableNotificationContent(), trigger: nil)
-  }
-
-  func testPendingNotificationWithoutScheduleIsSkipped() throws {
-    let handler = NotificationHandler()
-    let request = try saved(handler, json: #"{"id":1,"title":"t"}"#)
-    XCTAssertNil(handler.toPendingNotification(request))
-  }
-
-  func testPendingNotificationWithScheduleIsReported() throws {
-    let handler = NotificationHandler()
-    let request = try saved(
-      handler,
-      json: #"{"id":2,"title":"t","schedule":{"every":{"interval":"day","count":1}}}"#)
-    XCTAssertEqual(handler.toPendingNotification(request)?.id, 2)
-  }
-
   func testProvisionalAndEphemeralGrantsAllowDelivery() {
     XCTAssertTrue(NotificationHandler.allowsDelivery(.authorized))
     XCTAssertTrue(NotificationHandler.allowsDelivery(.provisional))
