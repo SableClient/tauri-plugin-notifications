@@ -58,9 +58,65 @@ struct NotificationAttachment: Codable {
   let options: NotificationAttachmentOptions?
 }
 
+enum JSONValue: Codable {
+  case string(String)
+  case bool(Bool)
+  case int(Int)
+  case double(Double)
+  case null
+  case array([JSONValue])
+  case object([String: JSONValue])
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if container.decodeNil() {
+      self = .null
+    } else if let value = try? container.decode(Bool.self) {
+      self = .bool(value)
+    } else if let value = try? container.decode(Int.self) {
+      self = .int(value)
+    } else if let value = try? container.decode(Double.self) {
+      self = .double(value)
+    } else if let value = try? container.decode(String.self) {
+      self = .string(value)
+    } else if let value = try? container.decode([JSONValue].self) {
+      self = .array(value)
+    } else {
+      self = .object(try container.decode([String: JSONValue].self))
+    }
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .string(let value): try container.encode(value)
+    case .bool(let value): try container.encode(value)
+    case .int(let value): try container.encode(value)
+    case .double(let value): try container.encode(value)
+    case .null: try container.encodeNil()
+    case .array(let value): try container.encode(value)
+    case .object(let value): try container.encode(value)
+    }
+  }
+
+  var extraString: String? {
+    switch self {
+    case .string(let value): return value
+    case .bool(let value): return value ? "true" : "false"
+    case .int(let value): return String(value)
+    case .double(let value): return String(value)
+    case .null: return nil
+    case .array, .object:
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+      return (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+  }
+}
+
 struct Notification: Decodable {
   let id: Int
-  var title: String
+  var title: String?
   var body: String?
   var extra: [String: String]?
   var schedule: NotificationSchedule?
@@ -72,6 +128,28 @@ struct Notification: Decodable {
   var silent: Bool?
 }
 
+extension Notification {
+  enum CodingKeys: String, CodingKey {
+    case id, title, body, extra, schedule, attachments, sound, group, actionTypeId, summary, silent
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(Int.self, forKey: .id)
+    title = try container.decodeIfPresent(String.self, forKey: .title)
+    body = try container.decodeIfPresent(String.self, forKey: .body)
+    extra = try container.decodeIfPresent([String: JSONValue].self, forKey: .extra)?
+      .compactMapValues(\.extraString)
+    schedule = try container.decodeIfPresent(NotificationSchedule.self, forKey: .schedule)
+    attachments = try container.decodeIfPresent([NotificationAttachment].self, forKey: .attachments)
+    sound = try container.decodeIfPresent(String.self, forKey: .sound)
+    group = try container.decodeIfPresent(String.self, forKey: .group)
+    actionTypeId = try container.decodeIfPresent(String.self, forKey: .actionTypeId)
+    summary = try container.decodeIfPresent(String.self, forKey: .summary)
+    silent = try container.decodeIfPresent(Bool.self, forKey: .silent)
+  }
+}
+
 struct RemoveActiveNotification: Decodable {
   let id: Int
 }
@@ -80,7 +158,7 @@ struct RemoveActiveArgs: Decodable {
   let notifications: [RemoveActiveNotification]
 }
 
-func showNotification(notification: Notification, completion: @escaping (Error?) -> Void) throws {
+func makeNotificationRequest(_ notification: Notification) throws -> UNNotificationRequest {
   var content: UNNotificationContent
   do {
     content = try makeNotificationContent(notification)
@@ -98,16 +176,18 @@ func showNotification(notification: Notification, completion: @escaping (Error?)
     throw ShowNotificationError.create(error)
   }
 
-  // Schedule the request.
-  let request = UNNotificationRequest(
+  return UNNotificationRequest(
     identifier: notificationRequestIdentifier(notification), content: content, trigger: trigger
   )
+}
 
+func showNotification(request: UNNotificationRequest, completion: @escaping (Error?) -> Void) {
+  let content = request.content
   let center = UNUserNotificationCenter.current()
   func add() {
     center.add(request) { (error: Error?) in completion(error) }
   }
-  if trigger == nil && notification.extra?["event_id"] != nil {
+  if request.trigger == nil && content.userInfo["event_id"] != nil {
     center.getDeliveredNotifications { delivered in
       let matching = delivered.filter {
         NotificationHandler.matchesMessage($0.request.content.userInfo, content.userInfo)
@@ -218,54 +298,32 @@ class NotificationPlugin: Plugin {
 
   @objc public func show(_ invoke: Invoke) throws {
     let notification = try invoke.parseArgs(Notification.self)
-    let identifier = notificationRequestIdentifier(notification)
-
-    let saved = notificationHandler.saveNotification(identifier, notification)
-    do {
-      try showNotification(notification: notification) { [weak self] error in
-        if let error {
-          self?.notificationHandler.rollback(saved)
-          invoke.reject(error.localizedDescription)
-        } else {
-          invoke.resolve(notification.id)
-        }
+    let request = try makeNotificationRequest(notification)
+    showNotification(request: request) { error in
+      if let error {
+        invoke.reject(error.localizedDescription)
+      } else {
+        invoke.resolve(notification.id)
       }
-    } catch {
-      notificationHandler.rollback(saved)
-      throw error
     }
   }
 
   @objc public func batch(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(BatchArgs.self)
-    var ids = [Int]()
+    let requests = try args.notifications.map(makeNotificationRequest)
     let group = DispatchGroup()
     let failure = NSLock()
     var firstError: Error?
-    func record(_ error: Error) {
-      failure.lock()
-      firstError = firstError ?? error
-      failure.unlock()
-    }
 
-    for notification in args.notifications {
-      let identifier = notificationRequestIdentifier(notification)
-      let saved = notificationHandler.saveNotification(identifier, notification)
+    for request in requests {
       group.enter()
-      do {
-        try showNotification(notification: notification) { [weak self] error in
-          if let error {
-            self?.notificationHandler.rollback(saved)
-            record(error)
-          }
-          group.leave()
+      showNotification(request: request) { error in
+        if let error {
+          failure.lock()
+          firstError = firstError ?? error
+          failure.unlock()
         }
-        ids.append(notification.id)
-      } catch {
-        notificationHandler.rollback(saved)
         group.leave()
-        record(error)
-        break
       }
     }
 
@@ -273,7 +331,7 @@ class NotificationPlugin: Plugin {
       if let firstError {
         invoke.reject(firstError.localizedDescription)
       } else {
-        invoke.resolve(ids)
+        invoke.resolve(args.notifications.map { $0.id })
       }
     }
   }
@@ -424,17 +482,13 @@ class NotificationPlugin: Plugin {
 
     let identifiers = args.notifications.map { String($0) }
     UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers)
-    notificationHandler.forget(identifiers)
     invoke.resolve()
   }
 
   @objc func cancelAll(_ invoke: Invoke) {
     let center = UNUserNotificationCenter.current()
-    center.getPendingNotificationRequests { [weak self] pending in
-      center.removeAllPendingNotificationRequests()
-      self?.notificationHandler.forget(pending.map { $0.identifier })
-      invoke.resolve()
-    }
+    center.removeAllPendingNotificationRequests()
+    invoke.resolve()
   }
 
   @objc func getPending(_ invoke: Invoke) {
@@ -455,33 +509,29 @@ class NotificationPlugin: Plugin {
   }
 
   @objc func removeActive(_ invoke: Invoke) throws {
-    let args = try invoke.parseArgs(RemoveActiveArgs.self)
     let center = UNUserNotificationCenter.current()
-    if args.notifications.isEmpty {
-      center.getDeliveredNotifications { [weak self] delivered in
-        center.removeAllDeliveredNotifications()
-        self?.notificationHandler.forget(delivered.map { $0.request.identifier })
-        if #available(iOS 16.0, *) {
-          center.setBadgeCount(0) { error in
-            if let error { Logger.error("Failed to clear the badge: \(error)") }
-          }
-        } else {
-          DispatchQueue.main.async(execute: {
-            UIApplication.shared.applicationIconBadgeNumber = 0
-          })
+    // Rust serializes the argument-less remove-all call as null
+    guard invoke.getRawArgs() != "null" else {
+      center.removeAllDeliveredNotifications()
+      if #available(iOS 16.0, *) {
+        center.setBadgeCount(0) { error in
+          if let error { Logger.error("Failed to clear the badge: \(error)") }
         }
-        invoke.resolve()
+      } else {
+        DispatchQueue.main.async(execute: {
+          UIApplication.shared.applicationIconBadgeNumber = 0
+        })
       }
+      invoke.resolve()
       return
     }
-    let ids = Set(args.notifications.map { $0.id })
-    center.getDeliveredNotifications { [weak self] notifications in
+    let ids = Set(try invoke.parseArgs(RemoveActiveArgs.self).notifications.map { $0.id })
+    center.getDeliveredNotifications { [weak self] delivered in
       guard let self else { return invoke.resolve() }
-      let identifiers = notifications.filter {
+      let identifiers = delivered.filter {
         self.notificationHandler.matches($0.request, ids: ids)
       }.map { $0.request.identifier }
       center.removeDeliveredNotifications(withIdentifiers: identifiers)
-      self.notificationHandler.forget(identifiers)
       invoke.resolve()
     }
   }
@@ -489,9 +539,9 @@ class NotificationPlugin: Plugin {
   @objc func getActive(_ invoke: Invoke) {
     UNUserNotificationCenter.current().getDeliveredNotifications(completionHandler: {
       (notifications) in
-      let ret = notifications.compactMap({ (notification) -> ActiveNotification? in
-        return self.notificationHandler.toActiveNotification(
-          notification.request)
+      let ret = notifications.map({ (notification) -> ActiveNotification in
+        return self.notificationHandler.toActiveNotification(notification.request)
+          ?? self.notificationHandler.toRemoteActionNotification(notification.request)
       })
       invoke.resolve(ret)
     })

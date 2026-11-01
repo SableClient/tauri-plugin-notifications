@@ -51,9 +51,7 @@ enum AppDelegateSwizzler {
     let effectiveIMP = class_getInstanceMethod(cls, selector).map(method_getImplementation)
     let ownIMP = class_replaceMethod(
       cls, selector, method_getImplementation(replacementMethod), method_getTypeEncoding(replacementMethod))
-    if let original = ownIMP ?? effectiveIMP {
-      originalIMPs[selector] = original
-    }
+    originalIMPs[selector] = ownIMP ?? effectiveIMP
   }
 
   fileprivate static func callOriginalDidRegister(

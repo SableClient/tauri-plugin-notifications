@@ -91,7 +91,7 @@ final class NotificationTests: XCTestCase {
 
         XCTAssertEqual(content.title, "Test Title")
         XCTAssertEqual(content.body, "Test Body")
-        XCTAssertTrue(content.userInfo.isEmpty)
+        XCTAssertEqual(Array(content.userInfo.keys) as? [String], [localOriginKey])
     }
 
     func testMakeNotificationContentWithExtra() throws {
@@ -621,7 +621,6 @@ final class NotificationTests: XCTestCase {
             summary: nil,
             silent: nil
         )
-        handler.saveNotification("42", notification)
 
         let content = try makeNotificationContent(notification)
         let request = UNNotificationRequest(identifier: "42", content: content, trigger: nil)
@@ -656,7 +655,7 @@ final class NotificationTests: XCTestCase {
         let notification = json?["notification"] as? [String: Any]
         let extra = notification?["extra"] as? [String: String]
 
-        XCTAssertEqual(active.id, -1)
+        XCTAssertEqual(active.id, handler.roomNotificationId(content.userInfo))
         XCTAssertEqual(active.source, "push")
         XCTAssertEqual(active.actionTypeId, "sable-message")
         XCTAssertEqual(extra?["room_id"], "!room:example.org")
@@ -715,12 +714,11 @@ final class NotificationTests: XCTestCase {
             trigger: nil
         )
 
-        // Should return nil since no notification was saved with this identifier
         let pending = handler.toPendingNotification(request)
         XCTAssertNil(pending)
     }
 
-    func testNotificationHandlerToPendingNotificationWithSavedNotification() {
+    func testNotificationHandlerToPendingNotificationFromLocalSchedule() throws {
         let handler = NotificationHandler()
         let schedule = NotificationSchedule.every(interval: .day, count: 1)
         let notification = Notification(
@@ -737,12 +735,10 @@ final class NotificationTests: XCTestCase {
             silent: nil
         )
 
-        // Save the notification first
-        handler.saveNotification("123", notification)
-
         let content = UNMutableNotificationContent()
         content.title = "Test Title"
         content.body = "Test Body"
+        content.userInfo = try! makeNotificationContent(notification).userInfo
 
         let request = UNNotificationRequest(
             identifier: "123",

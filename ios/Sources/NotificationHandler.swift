@@ -6,67 +6,24 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
 
   public weak var plugin: Plugin?
 
-  private var notificationsMap = [String: Notification]()
   private var hasClickedListener = false
-  private var pendingNotificationClick: NotificationClickedData? = nil
+  private var pendingNotificationClicks = [NotificationClickedData]()
   private var hasActionListener = false
   private var pendingNotificationActions = [ReceivedNotification]()
   private let maxPendingActions = 32
+  private let maxPendingClicks = 8
   // Serializes delegate callbacks and plugin commands.
   private let stateLock = NSRecursiveLock()
-
-  private var saveTokens = [String: UInt64]()
-  private var lastSaveToken: UInt64 = 0
-
-  internal struct SavedNotification {
-    let key: String
-    fileprivate let token: UInt64
-    fileprivate let previous: (notification: Notification, token: UInt64)?
-  }
-
-  @discardableResult
-  internal func saveNotification(_ key: String, _ notification: Notification) -> SavedNotification {
-    stateLock.lock()
-    defer { stateLock.unlock() }
-    lastSaveToken += 1
-    let previous = notificationsMap[key].flatMap { old in
-      saveTokens[key].map { (notification: old, token: $0) }
-    }
-    notificationsMap.updateValue(notification, forKey: key)
-    saveTokens[key] = lastSaveToken
-    return SavedNotification(key: key, token: lastSaveToken, previous: previous)
-  }
-
-  /// Skipped when a later save already replaced it.
-  internal func rollback(_ saved: SavedNotification) {
-    stateLock.lock()
-    defer { stateLock.unlock() }
-    guard saveTokens[saved.key] == saved.token else { return }
-    if let previous = saved.previous {
-      notificationsMap[saved.key] = previous.notification
-      saveTokens[saved.key] = previous.token
-    } else {
-      notificationsMap.removeValue(forKey: saved.key)
-      saveTokens.removeValue(forKey: saved.key)
-    }
-  }
-
-  internal func forget(_ keys: [String]) {
-    stateLock.lock()
-    defer { stateLock.unlock() }
-    keys.forEach {
-      notificationsMap.removeValue(forKey: $0)
-      saveTokens.removeValue(forKey: $0)
-    }
-  }
 
   func setClickListenerActive(_ active: Bool) {
     stateLock.lock()
     hasClickedListener = active
-    let pending = active ? pendingNotificationClick : nil
-    if pending != nil { pendingNotificationClick = nil }
+    let pending = active ? pendingNotificationClicks : []
+    if active { pendingNotificationClicks.removeAll() }
     stateLock.unlock()
-    if let pending { self.plugin?.emit("notificationClicked", pending) }
+    for click in pending {
+      self.plugin?.emit("notificationClicked", click)
+    }
   }
 
   func setActionListenerActive(_ active: Bool) {
@@ -143,7 +100,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     let options: UNNotificationPresentationOptions
     if isPushNotification {
       options = UNNotificationPresentationOptions(rawValue: 0)
-    } else if let local = notificationsMap[notification.request.identifier], local.silent ?? false {
+    } else if Self.localOrigin(notification.request.content.userInfo)?.silent ?? false {
       options = UNNotificationPresentationOptions(rawValue: 0)
     } else {
       options = [.banner, .list, .badge, .sound]
@@ -213,31 +170,43 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       data: Self.notificationExtra(originalNotificationRequest.content.userInfo)
     )
 
-    let shouldTriggerClick = hasClickedListener
-    if shouldTriggerClick {
-      // Listener exists, trigger directly after releasing the lock.
-    } else {
-      // No listener (cold-start), store for later
-      pendingNotificationClick = clickedData
-    }
+    let shouldTriggerClick = deliversClick(clickedData)
     stateLock.unlock()
     if shouldTriggerAction { self.plugin?.emit("actionPerformed", action) }
     if shouldTriggerClick { self.plugin?.emit("notificationClicked", clickedData) }
   }
 
-  func toActiveNotification(_ request: UNNotificationRequest) -> ActiveNotification? {
+  static func localOrigin(_ userInfo: [AnyHashable: Any]) -> LocalOrigin? {
+    guard let encoded = userInfo[localOriginKey] as? String else { return nil }
+    return try? JSONDecoder().decode(LocalOrigin.self, from: Data(encoded.utf8))
+  }
+
+  func deliversClick(_ click: NotificationClickedData) -> Bool {
     stateLock.lock()
     defer { stateLock.unlock() }
-    guard let notificationRequest = notificationsMap[request.identifier] else {
+    if hasClickedListener { return true }
+    if pendingNotificationClicks.count >= maxPendingClicks { pendingNotificationClicks.removeFirst() }
+    pendingNotificationClicks.append(click)
+    return false
+  }
+
+  var pendingClickIds: [Int] {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return pendingNotificationClicks.map(\.id)
+  }
+
+  func toActiveNotification(_ request: UNNotificationRequest) -> ActiveNotification? {
+    guard let origin = Self.localOrigin(request.content.userInfo) else {
       return nil
     }
     return ActiveNotification(
       id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
-      sound: notificationRequest.sound ?? "",
+      sound: origin.sound ?? "",
       actionTypeId: request.content.categoryIdentifier,
-      attachments: notificationRequest.attachments,
+      attachments: origin.attachments,
       extra: Self.notificationExtra(request.content.userInfo)
     )
   }
@@ -279,7 +248,8 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     var extra = [String: String]()
     func merge(_ values: [AnyHashable: Any]) {
       for (key, value) in values {
-        guard let key = key as? String, key != "aps", key != "notification" else { continue }
+        guard let key = key as? String, key != "aps", key != "notification", key != localOriginKey
+          else { continue }
         if let value = value as? String {
           extra[key] = value
         } else if let value = value as? NSNumber {
@@ -315,10 +285,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
   }
 
   func toPendingNotification(_ request: UNNotificationRequest) -> PendingNotification? {
-    stateLock.lock()
-    defer { stateLock.unlock() }
-    guard let notification = notificationsMap[request.identifier],
-          let schedule = notification.schedule else {
+    guard let schedule = Self.localOrigin(request.content.userInfo)?.schedule else {
       return nil
     }
     return PendingNotification(
