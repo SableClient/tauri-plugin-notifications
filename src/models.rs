@@ -47,6 +47,12 @@ pub struct BatteryOptimizationResponse {
     pub ignoring: bool,
 }
 
+#[cfg(all(target_os = "android", feature = "push-notifications"))]
+#[derive(Debug, Deserialize)]
+pub struct ExactAlarmResponse {
+    pub allowed: bool,
+}
+
 /// Push provider requested at registration. Mirrors the guest `PushProvider` type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

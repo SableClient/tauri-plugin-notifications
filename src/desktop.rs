@@ -497,6 +497,15 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    #[allow(clippy::unused_self)]
+    pub const fn can_schedule_exact_alarms(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    pub const fn request_schedule_exact_alarms(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
     pub fn push_transport(&self) -> crate::Result<crate::models::PushTransport> {
         Ok(crate::models::PushTransport::default())
     }

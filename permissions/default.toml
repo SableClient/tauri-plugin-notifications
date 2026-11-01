@@ -38,6 +38,8 @@ permissions = [
   "allow-push-transport",
   "allow-is-ignoring-battery-optimizations",
   "allow-request-ignore-battery-optimizations",
+  "allow-can-schedule-exact-alarms",
+  "allow-request-schedule-exact-alarms",
   "allow-list-distributors",
   "allow-set-distributor",
   "allow-set-token",

@@ -3,7 +3,9 @@ package app.tauri.notification
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.NotificationManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -1159,18 +1161,52 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     invoke.resolve(result)
   }
 
+  @SuppressLint("BatteryLife")
   @Command
   fun requestIgnoreBatteryOptimizations(invoke: Invoke) {
-    try {
-      activity.startActivity(
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-          .setData(Uri.parse("package:${activity.packageName}")),
-      )
+    val packageUri = Uri.parse("package:${activity.packageName}")
+    if (openSettings(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(packageUri)) ||
+      openSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+    ) {
       invoke.resolve()
-    } catch (error: Exception) {
-      invoke.reject(error.message ?: "Could not open the battery optimization prompt")
+    } else {
+      invoke.reject("Could not open the battery optimization settings")
     }
   }
+
+  @Command
+  fun canScheduleExactAlarms(invoke: Invoke) {
+    val allowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+      activity.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+    val result = JSObject()
+    result.put("allowed", allowed)
+    invoke.resolve(result)
+  }
+
+  @Command
+  fun requestScheduleExactAlarms(invoke: Invoke) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+      invoke.resolve()
+      return
+    }
+    val packageUri = Uri.parse("package:${activity.packageName}")
+    if (openSettings(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).setData(packageUri)) ||
+      openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(packageUri))
+    ) {
+      invoke.resolve()
+    } else {
+      invoke.reject("Could not open the alarms and reminders settings")
+    }
+  }
+
+  private fun openSettings(intent: Intent): Boolean =
+    try {
+      activity.startActivity(intent)
+      true
+    } catch (error: ActivityNotFoundException) {
+      Logger.warn(Logger.tags(TAG), "No settings screen handles ${intent.action}: ${error.message}")
+      false
+    }
 
   @Command
   fun pushTransport(invoke: Invoke) {

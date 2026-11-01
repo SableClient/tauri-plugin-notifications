@@ -213,6 +213,28 @@ pub async fn request_ignore_battery_optimizations<R: Runtime>(
 }
 
 #[command]
+pub async fn can_schedule_exact_alarms<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<bool> {
+    #[cfg(mobile)]
+    return notification.can_schedule_exact_alarms().await;
+    #[cfg(desktop)]
+    return notification.can_schedule_exact_alarms();
+}
+
+#[command]
+pub async fn request_schedule_exact_alarms<R: Runtime>(
+    _app: AppHandle<R>,
+    notification: State<'_, Notifications<R>>,
+) -> Result<()> {
+    #[cfg(mobile)]
+    return notification.request_schedule_exact_alarms().await;
+    #[cfg(desktop)]
+    return notification.request_schedule_exact_alarms();
+}
+
+#[command]
 pub async fn push_transport<R: Runtime>(
     _app: AppHandle<R>,
     notification: State<'_, Notifications<R>>,

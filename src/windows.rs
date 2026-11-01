@@ -1049,6 +1049,15 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    #[allow(clippy::unused_self)]
+    pub fn can_schedule_exact_alarms(&self) -> crate::Result<bool> {
+        Ok(true)
+    }
+
+    pub fn request_schedule_exact_alarms(&self) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// Create a notification channel (not supported on Windows).
     pub fn create_channel(&self, _channel: crate::Channel) -> crate::Result<()> {
         Err(crate::Error::Io(std::io::Error::other(

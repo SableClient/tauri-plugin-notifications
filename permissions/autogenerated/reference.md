@@ -36,6 +36,8 @@ It allows all notification related features.
 - `allow-push-transport`
 - `allow-is-ignoring-battery-optimizations`
 - `allow-request-ignore-battery-optimizations`
+- `allow-can-schedule-exact-alarms`
+- `allow-request-schedule-exact-alarms`
 - `allow-list-distributors`
 - `allow-set-distributor`
 - `allow-set-token`
@@ -71,6 +73,32 @@ Enables the batch command without any pre-configured scope.
 <td>
 
 Denies the batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-can-schedule-exact-alarms`
+
+</td>
+<td>
+
+Enables the can_schedule_exact_alarms command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-can-schedule-exact-alarms`
+
+</td>
+<td>
+
+Denies the can_schedule_exact_alarms command without any pre-configured scope.
 
 </td>
 </tr>
@@ -643,6 +671,32 @@ Enables the request_permission command without any pre-configured scope.
 <td>
 
 Denies the request_permission command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:allow-request-schedule-exact-alarms`
+
+</td>
+<td>
+
+Enables the request_schedule_exact_alarms command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:deny-request-schedule-exact-alarms`
+
+</td>
+<td>
+
+Denies the request_schedule_exact_alarms command without any pre-configured scope.
 
 </td>
 </tr>

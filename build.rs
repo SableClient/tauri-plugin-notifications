@@ -29,6 +29,8 @@ const COMMANDS: &[&str] = &[
     "push_transport",
     "is_ignoring_battery_optimizations",
     "request_ignore_battery_optimizations",
+    "can_schedule_exact_alarms",
+    "request_schedule_exact_alarms",
     "list_distributors",
     "set_distributor",
     "set_token",

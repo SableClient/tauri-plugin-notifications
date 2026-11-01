@@ -350,6 +350,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R, Option<PluginConfig>> {
             commands::push_transport,
             commands::is_ignoring_battery_optimizations,
             commands::request_ignore_battery_optimizations,
+            commands::can_schedule_exact_alarms,
+            commands::request_schedule_exact_alarms,
             commands::remove_active,
             commands::remove_all,
             commands::cancel,
