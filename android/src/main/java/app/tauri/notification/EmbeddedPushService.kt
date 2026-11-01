@@ -445,7 +445,7 @@ class EmbeddedPushService : Service() {
             startForeground(
                 FOREGROUND_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
             )
         } else {
             startForeground(FOREGROUND_ID, notification)
