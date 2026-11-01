@@ -9,6 +9,8 @@ enum AppDelegateSwizzler {
 
   private static var originalIMPs: [Selector: IMP] = [:]
   private static var swizzled = false
+  // Resetting `delegate` makes UIKit release the delegate UIApplicationMain created.
+  private static var retainedDelegate: UIApplicationDelegate?
 
   /// Safe to call repeatedly: the app delegate may not be set yet the first time.
   static func swizzlePushCallbacks() {
@@ -38,6 +40,7 @@ enum AppDelegateSwizzler {
     )
 
     // UIKit caches which delegate selectors exist at assignment, so reassign to pick up the new ones.
+    retainedDelegate = delegate
     UIApplication.shared.delegate = nil
     UIApplication.shared.delegate = delegate
   }
