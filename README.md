@@ -67,7 +67,6 @@ This enables:
 On Linux you also need a UnifiedPush *distributor* app installed (ntfy, NextPush, Conversations, etc. — see the [distributor list](https://unifiedpush.org/users/distributors/)). The plugin itself is stateless: any distributor selection or client token you set lives only for the current process. See [Linux UnifiedPush Setup](#linux-unifiedpush-setup) below for details.
 
 Without this feature enabled:
-- Firebase dependencies are not included in Android builds
 - Push notification registration code is disabled
 - The `registerForPushNotifications()` function will return an error if called
 
@@ -456,11 +455,11 @@ Requests the permission to send notifications.
 **Returns:** `Promise<'granted' | 'denied' | 'default'>`
 
 ### `registerForPushNotifications()`
-Registers the app for push notifications. On Android this retrieves the FCM device token; on iOS this requests permission and registers for remote notifications; on Linux this registers with the selected UnifiedPush distributor.
+Registers the app for push notifications. On Android this creates a WebPush subscription through FCM or UnifiedPush; on iOS this requests permission and registers for remote notifications; on Linux this registers with the selected UnifiedPush distributor.
 
-**Returns:** `Promise<string>` — a platform-specific identifier:
+**Returns:** `Promise<PushRegistration>` with a platform-specific `deviceToken`:
 - iOS: APNs device token
-- Android: FCM device token
+- Android: push endpoint and subscription `instance`, plus `p256dh` and `auth` when supported
 - Linux: UnifiedPush endpoint URL (the URL your backend POSTs payloads to)
 
 ### `listDistributors()` **(Linux / UnifiedPush only)**
@@ -642,27 +641,10 @@ builds shipped through F-Droid or IzzyOnDroid; push then uses UnifiedPush only.
 3. For custom icons:
    - Place icons in `res/drawable/` folder
    - Reference by filename (without extension)
-4. **For push notifications (FCM)** - These steps must be done in your Tauri app project:
-   - Create a Firebase project at [Firebase Console](https://console.firebase.google.com/)
-   - Download the `google-services.json` file from Firebase Console
-   - Place `google-services.json` in your Tauri app's `gen/android/app/` directory
-   - Add the Google Services classpath to your app's `gen/android/build.gradle.kts`:
-     ```kotlin
-     buildscript {
-         repositories {
-             google()
-             mavenCentral()
-         }
-         dependencies {
-             classpath("com.google.gms:google-services:4.4.2")
-         }
-     }
-     ```
-   - Apply the plugin at the bottom of `gen/android/app/build.gradle.kts`:
-     ```kotlin
-     apply(plugin = "com.google.gms.google-services")
-     ```
-   - The notification plugin already includes the Firebase Cloud Messaging dependency when the `push-notifications` feature is enabled
+4. **For push notifications (FCM)**: select the `gms` flavor and pass your push
+   gateway's VAPID public key to `registerForPushNotifications()`. The embedded
+   FCM distributor uses Google Play services directly. A Firebase project,
+   `google-services.json`, and the Google Services Gradle plugin are not required.
 
 ### Linux UnifiedPush Setup
 
@@ -772,19 +754,18 @@ The plugin does **not** install this file for you — it's a packaging/deploymen
 
 ### Android push delegate
 
-The plugin delivers a push; it does not render one. `UnifiedPushReceiver`,
-`EmbeddedPushService` and the FCM service hand every raw payload to the
-`PushDelegate` named by the `app.tauri.notification.PUSH_DELEGATE` manifest
-meta-data, and a build with none does nothing with it. The delegate parses,
-decrypts, deduplicates and posts, and receives endpoint changes through
-`endpointChanged`. Transport events are reported through `record`.
+Android forwards raw payloads from `UnifiedPushReceiver` and
+`EmbeddedPushService` to the `PushDelegate` class named by the
+`app.tauri.notification.PUSH_DELEGATE` manifest meta-data. The app's delegate
+parses, decrypts, deduplicates and posts notifications. It receives endpoint
+changes through `endpointChanged` and transport outcomes through `record`.
 
 Registration results need different server routes:
 
 - `p256dh` and `auth`: use a WebPush-capable gateway (or a supporting homeserver).
 - HTTPS endpoint without those keys: use a Matrix UnifiedPush gateway, such as the
   endpoint provider's discovered gateway or a configured UnifiedPush gateway.
-- Bare FCM/APNs token: use the corresponding configured platform gateway/app ID.
+- Bare APNs token: use the configured Apple push gateway/app ID.
 
 Do not register a plain ntfy endpoint as an FCM token. Persist/re-register the
 pusher on startup and update it when the endpoint changes. Android force-stop

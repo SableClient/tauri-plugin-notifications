@@ -511,8 +511,7 @@ type PushProvider = "auto" | "fcm" | "unifiedpush" | "embedded";
  * `embeddedGatewayUrl` enables the in-app distributor on Android, used when neither FCM
  * nor an installed distributor can deliver.
  *
- * `userId` and `deviceId` name the crypto store a cold push should decrypt against; a
- * push that arrives with no app running has no other way to find it.
+ * `userId` and `deviceId` select the account's Android push subscription.
  *
  * @returns A promise resolving to the {@link PushRegistration}.
  */

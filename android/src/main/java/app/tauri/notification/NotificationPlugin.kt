@@ -80,7 +80,6 @@ class RegisterPushArgs {
   var vapid: String? = null
   var provider: String? = null
   var embeddedGatewayUrl: String? = null
-  /** Stored so a cold push knows which account to decrypt against. */
   var userId: String? = null
   var deviceId: String? = null
 }
@@ -122,21 +121,19 @@ class RemoveActiveArgs {
   ]
 )
 class NotificationPlugin(private val activity: Activity): Plugin(activity) {
-  private var webView: WebView? = null
   private lateinit var manager: TauriNotificationManager
   private lateinit var notificationManager: NotificationManager
   private lateinit var notificationStorage: NotificationStorage
-  private var channelManager = ChannelManager(activity)
+  private val channelManager = ChannelManager(activity)
 
   private data class PushRegistration(
     val vapid: String?,
     val provider: String,
     val embeddedGatewayUrl: String?,
-    val instance: String?,
+    val instance: String,
     var distributor: String?,
     var phase: PushRegistrationPhase,
     val invoke: Invoke,
-    val generation: Long,
     var timeout: Runnable? = null,
     var embeddedPreviousRegistration: UnifiedPushStateStore.Registration? = null,
     val renewsActive: Boolean = false,
@@ -147,8 +144,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   private var pendingPushRegistration: PushRegistration? = null
   private val mainHandler = Handler(Looper.getMainLooper())
   private val unifiedPushState = UnifiedPushStateStore(activity)
-  private var unifiedPushGeneration = 0L
-
 
   // Click listener tracking for cold-start support
   private var hasClickedListener = false
@@ -161,13 +156,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   // once a listener has attached.
   private var hasPushMessageListener = false
 
-  // onNewIntent can fire before load() during a cold start triggered
-  // by a notification tap (Android delivers the launch intent via
-  // both onCreate's activity.intent AND onNewIntent in certain launch
-  // modes; if Tauri's PluginManager hasn't called load() yet,
-  // `manager` is uninitialized and the original code crashed with
-  // `lateinit property manager has not been initialized`). Buffer the
-  // intent and drain in load() instead.
+  // Notification taps can reach onNewIntent before load() initializes the manager.
   private var pendingIntent: Intent? = null
 
   companion object {
@@ -213,7 +202,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     instance = this
 
     super.load(webView)
-    this.webView = webView
     notificationStorage = NotificationStorage(activity, jsonMapper())
     
     val manager = TauriNotificationManager(
@@ -279,16 +267,12 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     if (Intent.ACTION_MAIN == intent.action) {
       val dataJson = manager.handleNotificationActionPerformed(intent, notificationStorage)
       if (dataJson != null) {
-        when (dataJson.getString("actionId")) {
-          DEFAULT_PRESS_ACTION -> {
-            triggerActionPerformed(dataJson)
-            triggerNotificationClicked(
-              intent.getIntExtra(NOTIFICATION_INTENT_KEY, -1),
-              extractLocalNotificationData(intent)
-            )
-          }
-          "dismiss" -> triggerActionPerformed(dataJson)
-          else -> triggerActionPerformed(dataJson)
+        triggerActionPerformed(dataJson)
+        if (dataJson.getString("actionId") == DEFAULT_PRESS_ACTION) {
+          triggerNotificationClicked(
+            intent.getIntExtra(NOTIFICATION_INTENT_KEY, -1),
+            extractLocalNotificationData(intent)
+          )
         }
         return
       }
@@ -495,12 +479,10 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.reject("Unknown push provider: $provider")
       return
     }
-    pendingPushRegistration?.let { registration ->
+    if (pendingPushRegistration != null) {
       invoke.reject("Push registration already in progress")
       return
     }
-    // Both transports now run through UnifiedPush and are told apart by their distributor,
-    // so switching between them is a re-registration rather than a conflict.
     val distributor = if (provider == PushProvider.FCM) null else UnifiedPush.getSavedDistributor(activity)
 
     val user = args.userId?.takeIf { it.isNotEmpty() }
@@ -517,7 +499,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       distributor,
       PushRegistrationPhase.PERMISSION,
       invoke,
-      ++unifiedPushGeneration,
       renewsActive = unifiedPushState.endpoint != null && unifiedPushState.acceptsUnifiedPush(instance),
     )
 
@@ -544,112 +525,68 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
 
   private fun proceedPushRegistration() {
     val registration = pendingPushRegistration ?: return
-    // Started only now so the permission prompt, which waits on the user, cannot use it up.
+    // The permission prompt must not consume the registration timeout.
     schedulePushRegistrationTimeout()
-    val pushInstance = checkNotNull(registration.instance)
-    val webPushVapid = registration.vapid
-    // Re-read: the saved distributor may be gone, in which case register() sends
-    // no broadcast and we'd wait out the timeout. Fall through to selection.
+    var distributor = UnifiedPush.getSavedDistributor(activity)
     val nativeAvailable = registration.provider in setOf(PushProvider.AUTO, PushProvider.FCM) && FcmBridge.isAvailable(activity)
     val nativeSelected = registration.provider == PushProvider.FCM ||
       (registration.provider == PushProvider.AUTO && !unifiedPushState.useEmbeddedDistributor &&
-        nativeAvailable && (UnifiedPush.getSavedDistributor(activity) == null ||
-          UnifiedPush.getSavedDistributor(activity) == activity.packageName))
+        nativeAvailable && (distributor == null || distributor == activity.packageName))
     if (nativeSelected) {
-      if (!nativeAvailable) {
-        finishPushRegistrationError("Google Play services are unavailable; choose UnifiedPush or the built-in distributor")
-        return
-      }
-      registration.phase = PushRegistrationPhase.UNIFIED_PUSH
-      registration.distributor = activity.packageName
-      try {
-        // The embedded FCM distributor needs no google-services.json: it takes a VAPID
-        // key at runtime, so native push works on builds without Firebase config.
-        UnifiedPush.saveDistributor(activity, activity.packageName)
-        UnifiedPush.register(
-          activity,
-          pushInstance,
-          vapid = webPushVapid,
-          keyManager = CachedKeyManager.getInstance(activity),
-        )
-      } catch (error: Exception) {
-        finishPushRegistrationError(error.message ?: "Native push registration failed")
-      }
+      if (nativeAvailable) registerUnifiedPush(registration, activity.packageName)
+      else finishPushRegistrationError("Google Play services are unavailable; choose UnifiedPush or the built-in distributor")
       return
     }
 
-    // Checked before any installed distributor: the user asked for this one explicitly.
-    if (registration.provider == PushProvider.EMBEDDED ||
-      (registration.provider != PushProvider.FCM && unifiedPushState.useEmbeddedDistributor)) {
+    if (registration.provider == PushProvider.EMBEDDED || unifiedPushState.useEmbeddedDistributor) {
       if (!startEmbeddedPushRegistration(registration)) {
-        finishPushRegistrationError(
-          "The built-in distributor needs a gateway; set the built-in distributor server first"
-        )
+        finishPushRegistrationError("The built-in distributor needs a gateway; set the built-in distributor server first")
       }
       return
     }
 
-    var savedDistributor =
-      if (registration.provider == PushProvider.FCM) null else UnifiedPush.getSavedDistributor(activity)
     if (registration.provider == PushProvider.AUTO && !nativeAvailable) {
-      savedDistributor = savedDistributor?.takeUnless { it == activity.packageName }
+      distributor = distributor?.takeUnless { it == activity.packageName }
         ?: UnifiedPush.getDistributors(activity).firstOrNull { it != activity.packageName }
-      if (savedDistributor == null) {
+      if (distributor == null) {
         if (!startEmbeddedPushRegistration(registration)) {
           finishPushRegistrationError("No push distributor available; configure the built-in distributor")
         }
         return
       }
-      UnifiedPush.saveDistributor(activity, savedDistributor)
     }
-    registration.distributor = savedDistributor
-    if (registration.provider != PushProvider.FCM && savedDistributor != null) {
-      registration.phase = PushRegistrationPhase.UNIFIED_PUSH
-      try {
-        UnifiedPush.register(activity, pushInstance, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
-      } catch (error: Exception) {
-        finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
-      }
+    if (distributor != null) {
+      registerUnifiedPush(registration, distributor)
       return
     }
 
-    if (webPushVapid != null && (registration.provider == PushProvider.UNIFIED_PUSH || registration.provider == PushProvider.AUTO)) {
-      registration.phase = PushRegistrationPhase.DISTRIBUTOR
-      try {
-        UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { success ->
-          if (pendingPushRegistration !== registration) return@tryUseCurrentOrDefaultDistributor
-          if (!success) {
-            if (registration.provider != PushProvider.AUTO || !startEmbeddedPushRegistration(registration)) {
-              finishPushRegistrationError("No UnifiedPush distributor available")
-            }
-            return@tryUseCurrentOrDefaultDistributor
-          }
-          try {
-            registration.distributor = UnifiedPush.getSavedDistributor(activity)
-            registration.phase = PushRegistrationPhase.UNIFIED_PUSH
-            UnifiedPush.register(activity, pushInstance, vapid = webPushVapid, keyManager = CachedKeyManager.getInstance(activity))
-          } catch (error: Exception) {
-            finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
-          }
+    if (registration.vapid == null) {
+      if (!startEmbeddedPushRegistration(registration)) finishPushRegistrationError("No push distributor available")
+      return
+    }
+    registration.phase = PushRegistrationPhase.DISTRIBUTOR
+    try {
+      UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { success ->
+        if (pendingPushRegistration !== registration) return@tryUseCurrentOrDefaultDistributor
+        val selected = UnifiedPush.getSavedDistributor(activity).takeIf { success }
+        if (selected != null) registerUnifiedPush(registration, selected)
+        else if (registration.provider != PushProvider.AUTO || !startEmbeddedPushRegistration(registration)) {
+          finishPushRegistrationError("No UnifiedPush distributor available")
         }
-      } catch (error: Exception) {
-        finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
       }
-      return
+    } catch (error: Exception) {
+      finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
     }
+  }
 
-    if (registration.provider != PushProvider.FCM && UnifiedPush.getSavedDistributor(activity) != null) {
-      registration.phase = PushRegistrationPhase.UNIFIED_PUSH
-      try {
-        UnifiedPush.register(activity, pushInstance, keyManager = CachedKeyManager.getInstance(activity))
-      } catch (error: Exception) {
-        finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
-      }
-      return
-    }
-
-    if (!startEmbeddedPushRegistration(registration)) {
-      finishPushRegistrationError("No push distributor available")
+  private fun registerUnifiedPush(registration: PushRegistration, distributor: String) {
+    registration.distributor = distributor
+    registration.phase = PushRegistrationPhase.UNIFIED_PUSH
+    try {
+      UnifiedPush.saveDistributor(activity, distributor)
+      UnifiedPush.register(activity, registration.instance, vapid = registration.vapid, keyManager = CachedKeyManager.getInstance(activity))
+    } catch (error: Exception) {
+      finishPushRegistrationError(error.message ?: "UnifiedPush registration failed")
     }
   }
 
@@ -719,53 +656,17 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
 
-    val pendingEmbeddedPush = pendingPushRegistration?.takeIf {
-      it.phase == PushRegistrationPhase.EMBEDDED
-    }
-    val pendingUnifiedPush = pendingPushRegistration?.takeIf {
-      it.phase == PushRegistrationPhase.UNIFIED_PUSH || it.phase == PushRegistrationPhase.DISTRIBUTOR
-    }
-    val instancesToUnregister = PushSubscriptions(activity).instances() +
-      (pendingUnifiedPush?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE)
+    val instances = PushSubscriptions(activity).instances() +
+      (pendingPushRegistration?.instance ?: unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE)
     notificationManager.cancelAll()
     finishPushRegistrationError("Push registration cancelled by unregister", restoreEmbeddedRegistration = false)
     EmbeddedPushService.stop(activity)
-
-    if (pendingEmbeddedPush != null) {
-      instancesToUnregister.forEach { retireUnifiedPush(it) }
-      invoke.resolve()
-      return
-    }
-
-    if (unifiedPushState.activeProvider == PushProvider.EMBEDDED) {
-      instancesToUnregister.forEach { retireUnifiedPush(it) }
+    try {
+      instances.forEach { retireUnifiedPush(it, strict = true) }
       unifiedPushState.clearRegistration(clearProvider = true)
       invoke.resolve()
-      return
-    }
-
-    val embeddedFcm = unifiedPushState.activeProvider == PushProvider.FCM &&
-      unifiedPushState.distributor == activity.packageName
-    if (pendingUnifiedPush != null || unifiedPushState.activeProvider == PushProvider.UNIFIED_PUSH || embeddedFcm || PushSubscriptions(activity).instances().isNotEmpty()) {
-      try {
-        instancesToUnregister.forEach { retireUnifiedPush(it, strict = true) }
-      } catch (error: Exception) {
-        invoke.reject(error.message ?: "Failed to unregister UnifiedPush")
-        return
-      }
-      unifiedPushState.activeProvider = null
-      unifiedPushState.clearRegistration()
-      invoke.resolve()
-      return
-    }
-
-    FcmBridge.deleteToken { result ->
-      if (result is FcmDeleteResult.Failed) {
-        invoke.reject(result.message)
-        return@deleteToken
-      }
-      if (unifiedPushState.activeProvider == PushProvider.FCM) unifiedPushState.activeProvider = null
-      invoke.resolve()
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Could not unregister push subscriptions")
     }
   }
 
@@ -773,6 +674,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun unregisterPushInstance(invoke: Invoke) {
     val args = invoke.parseArgs(PushInstanceArgs::class.java)
     try {
+      val pending = pendingPushRegistration
+      if (pending?.instance == args.instance ||
+        (pending?.phase == PushRegistrationPhase.EMBEDDED && args.instance == UnifiedPushStateStore.INSTANCE)) {
+        finishPushRegistrationError("Push registration cancelled by unregister", restoreEmbeddedRegistration = false)
+      }
       if (unifiedPushState.isEmbeddedActive && args.instance == unifiedPushState.activeInstance) {
         EmbeddedPushService.stop(activity)
         unifiedPushState.clearRegistration(clearProvider = true)
@@ -825,7 +731,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       finishPushRegistrationError("Superseded by distributor change")
     }
     if (distributor == EMBEDDED_DISTRIBUTOR) {
-      unifiedPushGeneration++
       unifiedPushState.clearRegistration()
       unifiedPushState.activeProvider = null
       unifiedPushState.useEmbeddedDistributor = true
@@ -850,7 +755,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       // saveDistributor already replaces the previous primary. Unregistering
       // here would also wipe it, since unregister() drops every distributor
       // once the last instance is removed.
-      unifiedPushGeneration++
       if (unifiedPushState.activeProvider in setOf(PushProvider.UNIFIED_PUSH, PushProvider.EMBEDDED)) {
         unifiedPushState.activeProvider = null
       }
@@ -869,7 +773,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun onUnifiedPushNewEndpoint(endpoint: String, p256dh: String?, auth: String?, instance: String) {
     val registration = pendingPushRegistration
     if (registration?.phase != PushRegistrationPhase.UNIFIED_PUSH ||
-      registration.generation != unifiedPushGeneration || instance != registration.instance) {
+      instance != registration.instance) {
       // Endpoint rotated outside a registration: keep the cache fresh.
       if (unifiedPushState.acceptsUnifiedPush(instance)) {
         if (instance == unifiedPushState.activeInstance) {
@@ -883,7 +787,6 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       return
     }
     val distributor = registration.distributor ?: UnifiedPush.getSavedDistributor(activity)
-    FcmBridge.useEmbeddedDelivery(activity, distributor == activity.packageName)
     unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) PushProvider.FCM else registration.provider)
     unifiedPushState.endpoint = endpoint
     unifiedPushState.activeInstance = registration.instance
@@ -905,7 +808,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   fun onUnifiedPushRegistrationFailed(reason: String?, instance: String) {
     val registration = pendingPushRegistration
     if (registration?.phase != PushRegistrationPhase.UNIFIED_PUSH ||
-      registration.generation != unifiedPushGeneration || instance != registration.instance) return
+      instance != registration.instance) return
     finishPushRegistrationError(reason ?: "UnifiedPush registration failed")
   }
 
@@ -1003,63 +906,19 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     unifiedPushState.activeInstance = registration.instance
     unifiedPushState.setUnifiedPushActive(if (distributor == activity.packageName) PushProvider.FCM else registration.provider)
     unifiedPushState.distributor = distributor
-    registration.instance?.let { PushSubscriptions(activity).remember(it) }
+    PushSubscriptions(activity).remember(registration.instance)
   }
 
-  private fun retireUnifiedPush(instance: String?, strict: Boolean = false) {
-    unifiedPushGeneration++
-    try { UnifiedPush.unregister(activity, instance ?: UnifiedPushStateStore.INSTANCE, CachedKeyManager.getInstance(activity)) } catch (error: Exception) {
+  private fun retireUnifiedPush(instance: String, strict: Boolean = false) {
+    try {
+      UnifiedPush.unregister(activity, instance, CachedKeyManager.getInstance(activity))
+    } catch (error: Exception) {
       if (strict) throw error
     }
-    PushSubscriptions(activity).forget(instance ?: UnifiedPushStateStore.INSTANCE)
-    val activeInstance = unifiedPushState.activeInstance
-    val retiresActiveInstance = activeInstance == instance ||
-      (activeInstance == null && instance == UnifiedPushStateStore.INSTANCE &&
-        unifiedPushState.activeProvider == PushProvider.UNIFIED_PUSH)
-    if (retiresActiveInstance) {
-      if (unifiedPushState.activeProvider == PushProvider.UNIFIED_PUSH) unifiedPushState.activeProvider = null
-      unifiedPushState.clearRegistration()
+    PushSubscriptions(activity).forget(instance)
+    if (instance == (unifiedPushState.activeInstance ?: UnifiedPushStateStore.INSTANCE)) {
+      unifiedPushState.clearRegistration(clearProvider = true)
     }
-  }
-
-  // Called by TauriFirebaseMessagingService when a new token is received
-  fun handleNewToken(token: String) {
-    if (!BuildConfig.ENABLE_PUSH_NOTIFICATIONS) return
-
-    if (unifiedPushState.activeProvider != PushProvider.FCM || unifiedPushState.distributor == activity.packageName) return
-    // Trigger push-token event to notify the frontend about the token
-    val data = JSObject()
-    data.put("token", token)
-    data.put("rotated", true)
-    trigger("push-token", data)
-  }
-
-  // Called by TauriFirebaseMessagingService when a push message is received
-  fun triggerPushMessage(pushData: Map<String, Any>) {
-    if (!BuildConfig.ENABLE_PUSH_NOTIFICATIONS) return
-    if (unifiedPushState.activeProvider != PushProvider.FCM) return
-
-    val data = JSObject()
-    for ((key, value) in pushData) {
-      when (value) {
-        is String -> data.put(key, value)
-        is Int -> data.put(key, value)
-        is Long -> data.put(key, value)
-        is Double -> data.put(key, value)
-        is Boolean -> data.put(key, value)
-        is Map<*, *> -> {
-          val nestedObj = JSObject()
-          @Suppress("UNCHECKED_CAST")
-          val map = value as Map<String, Any>
-          for ((k, v) in map) {
-            nestedObj.put(k, v.toString())
-          }
-          data.put(key, nestedObj)
-        }
-        else -> data.put(key, value.toString())
-      }
-    }
-    trigger("push-message", data)
   }
 
   @Command

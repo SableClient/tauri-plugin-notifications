@@ -64,7 +64,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
   var useEmbeddedDistributor: Boolean
     get() = prefs.getBoolean("up-use-embedded", false)
     set(value) = prefs.edit().putBoolean("up-use-embedded", value).apply()
-  /** The account a cold push decrypts against; there is no session to ask when cold. */
+  /** Account identity used to select a subscription. */
   var pushUserId: String?
     get() = prefs.getString("up-user-id", null)
     set(value) = prefs.edit().putString("up-user-id", value).apply()

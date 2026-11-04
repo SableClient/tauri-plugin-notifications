@@ -199,7 +199,6 @@ class EmbeddedPushRegistrationTest {
             plugin.unregisterForPushNotifications(unregister)
 
             verify(exactly = 1) { org.unifiedpush.android.connector.UnifiedPush.unregister(any(), "fcm-test", any()) }
-            verify(exactly = 0) { FcmBridge.deleteToken(any()) }
             assertEquals(null, state.endpoint)
             assertEquals(null, state.activeProvider)
             verify { unregister.resolve() }
@@ -230,28 +229,6 @@ class EmbeddedPushRegistrationTest {
         } finally {
             unmockkObject(FcmBridge)
             io.mockk.unmockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
-        }
-    }
-
-    @Test
-    fun embeddedFcmRegistrationDisablesTheCompetingFirebaseReceiver() {
-        assumeTrue(BuildConfig.FLAVOR == "gms")
-        val context = org.robolectric.RuntimeEnvironment.getApplication()
-        state.useEmbeddedDistributor = false
-        mockkObject(FcmBridge)
-        try {
-            every { FcmBridge.isAvailable(any()) } returns true
-            every { invoke.parseArgs(RegisterPushArgs::class.java) } returns RegisterPushArgs().apply { provider = "fcm" }
-            plugin.registerForPushNotifications(invoke)
-            plugin.onUnifiedPushNewEndpoint("https://fcm.googleapis.com/endpoint", "key", "auth", state.instanceForRegistration())
-            verify { invoke.resolve(any<JSObject>()) }
-            assertEquals(android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                context.packageManager.getComponentEnabledSetting(ComponentName(context, "com.google.firebase.iid.FirebaseInstanceIdReceiver")))
-            FcmBridge.useEmbeddedDelivery(context, false)
-            assertEquals(android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
-                context.packageManager.getComponentEnabledSetting(ComponentName(context, "com.google.firebase.iid.FirebaseInstanceIdReceiver")))
-        } finally {
-            unmockkObject(FcmBridge)
         }
     }
 

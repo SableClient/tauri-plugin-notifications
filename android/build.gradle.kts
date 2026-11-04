@@ -86,8 +86,7 @@ dependencies {
     implementation("com.google.android.material:material:1.14.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
-    "gmsImplementation"(platform("com.google.firebase:firebase-bom:35.1.0"))
-    "gmsImplementation"("com.google.firebase:firebase-messaging")
+    "gmsImplementation"("com.google.android.gms:play-services-base:18.9.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("org.unifiedpush.android:connector:3.3.5")
     // The connector declares Tink as a runtime-only dependency, so its WebPush
