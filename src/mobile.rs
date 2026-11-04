@@ -126,6 +126,23 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    /// Remove one Android subscription without affecting other accounts.
+    ///
+    /// # Errors
+    ///
+    /// When Android cannot unregister the subscription.
+    #[cfg(all(target_os = "android", feature = "push-notifications"))]
+    pub async fn unregister_push_instance(&self, instance: &str) -> crate::Result<()> {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            instance: &'a str,
+        }
+        self.0
+            .run_mobile_plugin_async::<()>("unregisterPushInstance", Args { instance })
+            .await
+            .map_err(Into::into)
+    }
+
     #[cfg(all(target_os = "android", feature = "push-notifications"))]
     pub async fn list_distributors(&self) -> crate::Result<Vec<String>> {
         self.0

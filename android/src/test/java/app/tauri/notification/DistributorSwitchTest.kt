@@ -86,11 +86,11 @@ class DistributorSwitchTest {
         verify { select.resolve() }
 
         val first = register("unifiedpush", "vapid")
-        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/upnew", "p256dh", "auth", UnifiedPushStateStore.INSTANCE)
+        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/upnew", "p256dh", "auth", state.instanceForRegistration("vapid"))
         verify { first.resolve(match<JSObject> { it.getString("deviceToken") == "https://ntfy.sh/upnew" }) }
 
         val again = register("unifiedpush", null)
-        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/upnew", null, null, UnifiedPushStateStore.INSTANCE)
+        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/upnew", null, null, state.instanceForRegistration(null))
         verify { again.resolve(match<JSObject> { it.getString("deviceToken") == "https://ntfy.sh/upnew" }) }
     }
 }

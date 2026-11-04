@@ -8,6 +8,8 @@ interface PushDelegate {
     fun render(context: Context, payload: String)
     fun schedule(context: Context, payload: String)
     fun endpointChanged(context: Context, endpoint: String, p256dh: String?, auth: String?)
+    fun endpointChanged(context: Context, instance: String, endpoint: String, p256dh: String?, auth: String?) =
+        endpointChanged(context, endpoint, p256dh, auth)
     fun record(context: Context, outcome: String)
 }
 

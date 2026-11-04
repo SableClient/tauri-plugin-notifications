@@ -19,10 +19,12 @@ class UnifiedPushReceiver : PushService() {
         if (NotificationPlugin.instance == null) {
             val state = UnifiedPushStateStore(this)
             if (!state.acceptsUnifiedPush(instance)) return
-            state.endpoint = endpoint.url
-            state.p256dh = endpoint.pubKeySet?.pubKey
-            state.auth = endpoint.pubKeySet?.auth
-            PushDelegates.get(this).endpointChanged(this, endpoint.url, endpoint.pubKeySet?.pubKey, endpoint.pubKeySet?.auth)
+            if (state.activeInstance == instance) {
+                state.endpoint = endpoint.url
+                state.p256dh = endpoint.pubKeySet?.pubKey
+                state.auth = endpoint.pubKeySet?.auth
+            }
+            PushDelegates.get(this).endpointChanged(this, instance, endpoint.url, endpoint.pubKeySet?.pubKey, endpoint.pubKeySet?.auth)
         }
         NotificationPlugin.instance?.onUnifiedPushNewEndpoint(
             endpoint.url,

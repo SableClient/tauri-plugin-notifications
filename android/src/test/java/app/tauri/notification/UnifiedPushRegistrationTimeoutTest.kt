@@ -104,7 +104,7 @@ class UnifiedPushRegistrationTimeoutTest {
         verify(exactly = 1) { invoke.reject("Timed out registering for push notifications") }
         assertEquals(null, state.endpoint)
 
-        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/uplate?up=1", "p256dh", "auth", UnifiedPushStateStore.INSTANCE)
+        plugin.onUnifiedPushNewEndpoint("https://ntfy.sh/uplate?up=1", "p256dh", "auth", state.instanceForRegistration("vapid"))
 
         assertEquals("https://ntfy.sh/uplate?up=1", state.endpoint)
         assertEquals("unifiedpush", state.activeProvider)
@@ -132,4 +132,43 @@ class UnifiedPushRegistrationTimeoutTest {
         }
         verify(exactly = 1) { UnifiedPush.register(any(), any(), any(), any(), any()) }
     }
+    @Test
+    fun switchingAccountsKeepsBothSubscriptionsAndLogoutRetiresOnlyOne() {
+        every { UnifiedPush.unregister(any(), any(), any()) } just Runs
+        fun register(user: String, key: String): String {
+            val request = mockk<Invoke>(relaxed = true)
+            every { request.parseArgs(RegisterPushArgs::class.java) } returns RegisterPushArgs().apply {
+                provider = "unifiedpush"
+                vapid = key
+                userId = user
+                deviceId = "DEVICE"
+            }
+            plugin.registerForPushNotifications(request)
+            val instance = state.instanceForRegistration(key)
+            plugin.onUnifiedPushNewEndpoint("https://push.test/$instance", "key-$user", "auth", instance)
+            verify { request.resolve(any<JSObject>()) }
+            return instance
+        }
+        val alice = register("@alice:one.test", "sender-one")
+        val bob = register("@bob:two.test", "sender-two")
+        kotlin.test.assertNotEquals(alice, bob)
+        kotlin.test.assertTrue(state.acceptsUnifiedPush(alice))
+        kotlin.test.assertTrue(state.acceptsUnifiedPush(bob))
+        NotificationPlugin::class.java.getDeclaredField("hasPushMessageListener").apply {
+            isAccessible = true
+            setBoolean(plugin, true)
+        }
+        kotlin.test.assertTrue(plugin.onUnifiedPushMessage("alice-message", alice))
+        kotlin.test.assertTrue(plugin.onUnifiedPushMessage("bob-message", bob))
+        verify { plugin.trigger("push-message", match<JSObject> { it.getString("instance") == alice }) }
+        val logout = mockk<Invoke>(relaxed = true)
+        every { logout.parseArgs(PushInstanceArgs::class.java) } returns PushInstanceArgs().apply { instance = alice }
+        plugin.unregisterPushInstance(logout)
+        kotlin.test.assertFalse(state.acceptsUnifiedPush(alice))
+        kotlin.test.assertTrue(state.acceptsUnifiedPush(bob))
+        kotlin.test.assertTrue(plugin.onUnifiedPushMessage("bob-still-receives", bob))
+        verify(exactly = 1) { UnifiedPush.unregister(any(), alice, any()) }
+        verify(exactly = 0) { UnifiedPush.unregister(any(), bob, any()) }
+    }
+
 }

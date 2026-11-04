@@ -165,6 +165,25 @@ class EmbeddedPushRegistrationTest {
     }
 
     @Test
+    fun retiringTheLastSharedEmbeddedSubscriptionClearsBootRegistration() {
+        plugin.registerForPushNotifications(invoke)
+        val unregister = mockk<Invoke>(relaxed = true)
+        every { unregister.parseArgs(PushInstanceArgs::class.java) } returns PushInstanceArgs().apply {
+            instance = UnifiedPushStateStore.INSTANCE
+        }
+        io.mockk.mockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        try {
+            every { org.unifiedpush.android.connector.UnifiedPush.unregister(any(), any(), any()) } just Runs
+            plugin.unregisterPushInstance(unregister)
+            assertEquals(null, state.activeProvider)
+            assertEquals(null, state.endpoint)
+            verify { unregister.resolve() }
+        } finally {
+            io.mockk.unmockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        }
+    }
+
+    @Test
     fun unregisteringEmbeddedFcmRetiresUnifiedPushRegistration() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         state.activeProvider = "fcm"
@@ -224,7 +243,7 @@ class EmbeddedPushRegistrationTest {
             every { FcmBridge.isAvailable(any()) } returns true
             every { invoke.parseArgs(RegisterPushArgs::class.java) } returns RegisterPushArgs().apply { provider = "fcm" }
             plugin.registerForPushNotifications(invoke)
-            plugin.onUnifiedPushNewEndpoint("https://fcm.googleapis.com/endpoint", "key", "auth", UnifiedPushStateStore.INSTANCE)
+            plugin.onUnifiedPushNewEndpoint("https://fcm.googleapis.com/endpoint", "key", "auth", state.instanceForRegistration())
             verify { invoke.resolve(any<JSObject>()) }
             assertEquals(android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 context.packageManager.getComponentEnabledSetting(ComponentName(context, "com.google.firebase.iid.FirebaseInstanceIdReceiver")))
@@ -316,7 +335,7 @@ class EmbeddedPushRegistrationTest {
         plugin.registerForPushNotifications(externalRegistration)
         verify(exactly = 0) { externalRegistration.reject(any<String>()) }
         val externalEndpoint = "https://ntfy.sh/up0123456789ab?up=1"
-        plugin.onUnifiedPushNewEndpoint(externalEndpoint, "external-key", "external-auth", UnifiedPushStateStore.INSTANCE)
+        plugin.onUnifiedPushNewEndpoint(externalEndpoint, "external-key", "external-auth", state.instanceForRegistration())
 
         assertEquals("unifiedpush", state.activeProvider)
         assertEquals("io.heckel.ntfy", state.distributor)

@@ -49,7 +49,7 @@ internal class UnifiedPushStateStore(private val context: Context) {
     get() = activeProvider == PushProvider.EMBEDDED && distributor == NotificationPlugin.EMBEDDED_DISTRIBUTOR
 
   fun acceptsUnifiedPush(instance: String): Boolean =
-    instance == activeInstance &&
+    PushSubscriptions(context).contains(instance) || instance == activeInstance &&
       (activeProvider == PushProvider.UNIFIED_PUSH ||
         (activeProvider == PushProvider.FCM && distributor == context.packageName))
 
@@ -180,17 +180,10 @@ internal class UnifiedPushStateStore(private val context: Context) {
       .apply()
   }
 
-  fun instanceForRegistration(): String {
-    val current = activeInstance
-    if (current != null && current != INSTANCE) {
-      try {
-        UnifiedPush.unregister(context, current, CachedKeyManager.getInstance(context))
-      } catch (error: RuntimeException) {
-        Log.w(TAG, "Could not unregister the previous instance $current", error)
-      }
-      activeInstance = INSTANCE
-    }
-    return INSTANCE
+  fun instanceForRegistration(vapid: String? = null): String {
+    val subscriptions = PushSubscriptions(context)
+    activeInstance?.takeIf { endpoint != null && acceptsUnifiedPush(it) }?.let(subscriptions::remember)
+    return subscriptions.instance(pushUserId, pushDeviceId, vapid)
   }
   fun ensureExplicitInstance() {
     if (prefs.getString("push-instance", null) == null) {
