@@ -47,7 +47,7 @@ pub struct BatteryOptimizationResponse {
     pub ignoring: bool,
 }
 
-#[cfg(all(target_os = "android", feature = "push-notifications"))]
+#[cfg(target_os = "android")]
 #[derive(Debug, Deserialize)]
 pub struct ExactAlarmResponse {
     pub allowed: bool,
