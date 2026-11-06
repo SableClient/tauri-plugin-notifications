@@ -219,7 +219,7 @@ final class NotificationTests: XCTestCase {
         let result = makeAttachmentOptions(options)
 
         XCTAssertEqual(result[UNNotificationAttachmentOptionsTypeHintKey] as? String, "public.jpeg")
-        XCTAssertEqual(result[UNNotificationAttachmentOptionsThumbnailHiddenKey] as? String, "true")
+        XCTAssertEqual(result[UNNotificationAttachmentOptionsThumbnailHiddenKey] as? Bool, true)
     }
 
     // MARK: - Schedule Tests
