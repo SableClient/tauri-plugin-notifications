@@ -61,8 +61,7 @@ This enables:
 - Firebase Cloud Messaging support on Android
 - APNs (Apple Push Notification service) support on iOS and macOS
 - UnifiedPush support on Linux (D-Bus distributor protocol)
-
-**Note:** Push notifications are currently supported on iOS, Android, macOS, and Linux. Windows support is not yet available.
+- A WNS channel on Windows; received pushes are forwarded to `onNotificationReceived`
 
 On Linux you also need a UnifiedPush *distributor* app installed (ntfy, NextPush, Conversations, etc. — see the [distributor list](https://unifiedpush.org/users/distributors/)). The plugin itself is stateless: any distributor selection or client token you set lives only for the current process. See [Linux UnifiedPush Setup](#linux-unifiedpush-setup) below for details.
 
@@ -106,6 +105,8 @@ Configure the plugin permissions in your `capabilities/default.json`:
   ]
 }
 ```
+
+`notifications:default` covers local notifications only. Add `notifications:push` for push registration, distributor selection and the Android battery-optimization settings, and `notifications:clear-all` for `cancelAll()` and `removeAllActive()`.
 
 Register the plugin in your Tauri app:
 

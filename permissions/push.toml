@@ -1,0 +1,24 @@
+"$schema" = "schemas/schema.json"
+
+[[set]]
+identifier = "push"
+description = """
+Allows push registration, distributor selection and the Android
+battery-optimization settings the built-in push service relies on.
+"""
+permissions = [
+  "allow-register-for-push-notifications",
+  "allow-unregister-for-push-notifications",
+  "allow-set-push-message-listener-active",
+  "allow-push-transport",
+  "allow-list-distributors",
+  "allow-set-distributor",
+  "allow-set-token",
+  "allow-is-ignoring-battery-optimizations",
+  "allow-request-ignore-battery-optimizations",
+]
+
+[[set]]
+identifier = "clear-all"
+description = "Allows cancelling every pending notification and removing every delivered one."
+permissions = ["allow-cancel-all", "allow-remove-all"]

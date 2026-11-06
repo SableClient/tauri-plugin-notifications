@@ -1,46 +1,29 @@
 ## Default Permission
 
-This permission set configures which
-notification features are by default exposed.
+Allows local notifications: sending, scheduling, actions, channels,
+listeners and permission requests.
 
-#### Granted Permissions
-
-It allows all notification related features.
+Push registration and Android power settings are in the `push` set.
 
 #### This default permission set includes the following:
 
 - `allow-is-permission-granted`
 - `allow-request-permission`
-- `allow-register-for-push-notifications`
-- `allow-unregister-for-push-notifications`
 - `allow-notify`
 - `allow-register-action-types`
 - `allow-register-listener`
 - `allow-remove-listener`
 - `allow-cancel`
-- `allow-cancel-all`
 - `allow-get-pending`
 - `allow-remove-active`
-- `allow-remove-all`
 - `allow-get-active`
-- `allow-check-permissions`
-- `allow-show`
-- `allow-batch`
 - `allow-list-channels`
 - `allow-delete-channel`
 - `allow-create-channel`
-- `allow-permission-state`
 - `allow-set-click-listener-active`
 - `allow-set-action-listener-active`
-- `allow-set-push-message-listener-active`
-- `allow-push-transport`
-- `allow-is-ignoring-battery-optimizations`
-- `allow-request-ignore-battery-optimizations`
 - `allow-can-schedule-exact-alarms`
 - `allow-request-schedule-exact-alarms`
-- `allow-list-distributors`
-- `allow-set-distributor`
-- `allow-set-token`
 
 ## Permission Table
 
@@ -50,32 +33,6 @@ It allows all notification related features.
 <th>Description</th>
 </tr>
 
-
-<tr>
-<td>
-
-`notifications:allow-batch`
-
-</td>
-<td>
-
-Enables the batch command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-batch`
-
-</td>
-<td>
-
-Denies the batch command without any pre-configured scope.
-
-</td>
-</tr>
 
 <tr>
 <td>
@@ -151,32 +108,6 @@ Enables the cancel_all command without any pre-configured scope.
 <td>
 
 Denies the cancel_all command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:allow-check-permissions`
-
-</td>
-<td>
-
-Enables the check_permissions command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-check-permissions`
-
-</td>
-<td>
-
-Denies the check_permissions command without any pre-configured scope.
 
 </td>
 </tr>
@@ -411,32 +342,6 @@ Enables the notify command without any pre-configured scope.
 <td>
 
 Denies the notify command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:allow-permission-state`
-
-</td>
-<td>
-
-Enables the permission_state command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-permission-state`
-
-</td>
-<td>
-
-Denies the permission_state command without any pre-configured scope.
 
 </td>
 </tr>
@@ -834,32 +739,6 @@ Denies the set_token command without any pre-configured scope.
 <tr>
 <td>
 
-`notifications:allow-show`
-
-</td>
-<td>
-
-Enables the show command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`notifications:deny-show`
-
-</td>
-<td>
-
-Denies the show command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `notifications:allow-unregister-for-push-notifications`
 
 </td>
@@ -879,6 +758,34 @@ Enables the unregister_for_push_notifications command without any pre-configured
 <td>
 
 Denies the unregister_for_push_notifications command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:push`
+
+</td>
+<td>
+
+Allows push registration, distributor selection and the Android
+battery-optimization settings the built-in push service relies on.
+
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`notifications:clear-all`
+
+</td>
+<td>
+
+Allows cancelling every pending notification and removing every delivered one.
 
 </td>
 </tr>

@@ -1,46 +1,28 @@
 "$schema" = "schemas/schema.json"
 [default]
 description = """
-This permission set configures which
-notification features are by default exposed.
+Allows local notifications: sending, scheduling, actions, channels,
+listeners and permission requests.
 
-#### Granted Permissions
-
-It allows all notification related features.
-
+Push registration and Android power settings are in the `push` set.
 """
 
 permissions = [
   "allow-is-permission-granted",
   "allow-request-permission",
-  "allow-register-for-push-notifications",
-  "allow-unregister-for-push-notifications",
   "allow-notify",
   "allow-register-action-types",
   "allow-register-listener",
   "allow-remove-listener",
   "allow-cancel",
-  "allow-cancel-all",
   "allow-get-pending",
   "allow-remove-active",
-  "allow-remove-all",
   "allow-get-active",
-  "allow-check-permissions",
-  "allow-show",
-  "allow-batch",
   "allow-list-channels",
   "allow-delete-channel",
   "allow-create-channel",
-  "allow-permission-state",
   "allow-set-click-listener-active",
   "allow-set-action-listener-active",
-  "allow-set-push-message-listener-active",
-  "allow-push-transport",
-  "allow-is-ignoring-battery-optimizations",
-  "allow-request-ignore-battery-optimizations",
   "allow-can-schedule-exact-alarms",
   "allow-request-schedule-exact-alarms",
-  "allow-list-distributors",
-  "allow-set-distributor",
-  "allow-set-token",
 ]
