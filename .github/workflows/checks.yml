@@ -55,6 +55,8 @@ jobs:
   clippy-mobile:
     name: cargo-clippy (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     strategy:
       matrix:
         include:

@@ -195,6 +195,8 @@ jobs:
   test-ios:
     name: iOS Unit Tests
     runs-on: macos-latest
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
 
     steps:
       - name: Checkout code
