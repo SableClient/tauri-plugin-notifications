@@ -1,4 +1,3 @@
-use serde::de::DeserializeOwned;
 use tauri::{
     AppHandle, Runtime,
     plugin::{PermissionState, PluginApi},
@@ -25,18 +24,34 @@ struct ActiveEntry {
     body: Option<String>,
 }
 
-// Signature must match the iOS/Android `init` so the cfg-gated call sites in `lib.rs::init` compile uniformly.
+// Returns `Result` like the other backends so the cfg-gated call sites in `lib.rs::init` stay uniform.
 #[allow(clippy::unnecessary_wraps)]
-pub fn init<R: Runtime, C: DeserializeOwned>(
+pub fn init<R: Runtime>(
     app: &AppHandle<R>,
-    _api: PluginApi<R, C>,
+    api: &PluginApi<R, Option<crate::PluginConfig>>,
 ) -> crate::Result<Notifications<R>> {
+    #[cfg(target_os = "linux")]
+    let action_types = api
+        .config()
+        .as_ref()
+        .map(|config| {
+            config
+                .action_types
+                .iter()
+                .map(|t| (t.id().to_owned(), t.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    #[cfg(not(target_os = "linux"))]
+    let _ = api;
     Ok(Notifications {
         app: app.clone(),
         #[cfg(target_os = "linux")]
         active: std::sync::Mutex::new(std::collections::HashMap::new()),
         #[cfg(target_os = "linux")]
         active_counter: std::sync::atomic::AtomicU64::new(0),
+        #[cfg(target_os = "linux")]
+        action_types: std::sync::Mutex::new(action_types),
         #[cfg(all(target_os = "linux", feature = "push-notifications"))]
         unifiedpush: tokio::sync::OnceCell::new(),
     })
@@ -48,8 +63,8 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct Notifications<R: Runtime> {
     app: AppHandle<R>,
     /// Currently-displayed notifications, keyed by an internal monotonic
-    /// counter (not the caller-supplied id, so multiple notifications with
-    /// the same id coexist without evicting each other). Holding the handles
+    /// counter. A notification shown with a caller id that is already tracked
+    /// replaces the earlier one on the server and in this map. Holding the handles
     /// keeps the popups visible and lets `cancel`/`cancel_all`/
     /// `remove_active`/`active` work without leaking. Entries are removed by
     /// explicit cancel; expired/auto-dismissed notifications may linger
@@ -58,6 +73,8 @@ pub struct Notifications<R: Runtime> {
     active: std::sync::Mutex<std::collections::HashMap<u64, ActiveEntry>>,
     #[cfg(target_os = "linux")]
     active_counter: std::sync::atomic::AtomicU64,
+    #[cfg(target_os = "linux")]
+    action_types: std::sync::Mutex<std::collections::HashMap<String, crate::ActionType>>,
     #[cfg(all(target_os = "linux", feature = "push-notifications"))]
     unifiedpush: tokio::sync::OnceCell<std::sync::Arc<crate::unifiedpush::UnifiedPushState>>,
 }
@@ -71,6 +88,76 @@ fn click_payload(
     extra: &std::collections::HashMap<String, serde_json::Value>,
 ) -> serde_json::Value {
     serde_json::json!({ "id": caller_id, "data": extra })
+}
+
+/// Same shape as the Windows and mobile `actionPerformed` payload.
+#[cfg(target_os = "linux")]
+fn action_payload(action_id: &str, notification: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "actionId": action_id, "inputValue": null, "notification": notification })
+}
+
+/// What a click or an action button reports back for one displayed notification.
+#[cfg(target_os = "linux")]
+struct Reply {
+    click: serde_json::Value,
+    notification: serde_json::Value,
+}
+
+#[cfg(target_os = "linux")]
+impl Reply {
+    fn new(
+        caller_id: i32,
+        title: Option<&str>,
+        body: Option<&str>,
+        action_type_id: Option<&str>,
+        extra: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            click: click_payload(caller_id, extra),
+            notification: serde_json::json!({
+                "id": caller_id,
+                "title": title,
+                "body": body,
+                "actionTypeId": action_type_id,
+                "extra": extra,
+            }),
+        }
+    }
+}
+
+/// Linux-only toast options layered on top of `imp::build_notification`.
+#[cfg(target_os = "linux")]
+struct Extras {
+    replaces_id: Option<u32>,
+    silent: bool,
+    sound: Option<String>,
+    image: Option<String>,
+    actions: Vec<(String, String)>,
+}
+
+#[cfg(target_os = "linux")]
+fn apply_extras(notification: &mut notify_rust::Notification, extras: Extras) {
+    use notify_rust::Hint;
+    if let Some(id) = extras.replaces_id {
+        notification.id(id);
+    }
+    if extras.silent {
+        notification.hint(Hint::SuppressSound(true));
+    } else if let Some(sound) = extras.sound {
+        notification.hint(if std::path::Path::new(&sound).is_absolute() {
+            Hint::SoundFile(sound)
+        } else {
+            Hint::SoundName(sound)
+        });
+    }
+    if let Some(image) = extras.image {
+        notification.hint(Hint::ImagePath(image));
+    }
+    if server_capabilities().iter().any(|c| c == "actions") {
+        for (id, title) in &extras.actions {
+            notification.action(id, title);
+        }
+    }
 }
 
 /// A failed query is not cached so a daemon that starts later is picked up.
@@ -111,23 +198,37 @@ fn watch_notification<R: Runtime>(
     app: AppHandle<R>,
     entry_id: u64,
     handle: std::sync::Arc<notify_rust::NotificationHandle>,
-    click_payload: Option<serde_json::Value>,
+    reply: Reply,
 ) {
+    use notify_rust::NotificationResponse;
     tauri::async_runtime::spawn(async move {
-        let mut clicked = false;
+        let mut response = None;
         handle
-            .wait_for_action_async(|response| {
-                clicked = matches!(response, notify_rust::NotificationResponse::Default);
-            })
+            .wait_for_action_async(|r| response = Some(r.clone()))
             .await;
 
-        {
+        // A replaced or cancelled entry is already gone, and its stale payload must not fire.
+        let tracked = {
             use tauri::Manager;
-            app.state::<Notifications<R>>().forget(entry_id);
+            app.state::<Notifications<R>>().forget(entry_id)
+        };
+        let (action_id, clicked) = match response {
+            Some(NotificationResponse::Default) => ("tap".to_owned(), true),
+            Some(NotificationResponse::Action(id)) => (id, false),
+            _ => return,
+        };
+        if !tracked {
+            return;
         }
-        if let (true, Some(payload)) = (clicked, click_payload) {
+        let action = action_payload(&action_id, &reply.notification);
+        if let Err(e) = crate::listeners::trigger("actionPerformed", action.to_string()) {
+            log::warn!("Failed to deliver a notification action: {e}");
+        }
+        if clicked {
             crate::focus::focus_app(&app);
-            if let Err(e) = crate::listeners::trigger("notificationClicked", payload.to_string()) {
+            if let Err(e) =
+                crate::listeners::trigger("notificationClicked", reply.click.to_string())
+            {
                 log::warn!("Failed to deliver a notification click: {e}");
             }
         }
@@ -174,13 +275,56 @@ impl<R: Runtime> Notifications<R> {
         Ok(())
     }
 
+    fn extras(&self, data: &crate::models::NotificationData) -> Extras {
+        let replaces_id = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .find(|entry| entry.caller_id == data.id)
+            .map(|entry| entry.handle.id());
+        let actions: Vec<(String, String)> = data
+            .action_type_id
+            .as_deref()
+            .and_then(|id| {
+                let types = self
+                    .action_types
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                types.get(id).map(|action_type| {
+                    // Freedesktop notifications have no text field, so a reply button would send nothing.
+                    action_type
+                        .actions()
+                        .iter()
+                        .filter(|a| !a.input())
+                        .map(|a| (a.id().to_owned(), a.title().to_owned()))
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        Extras {
+            replaces_id,
+            silent: data.silent,
+            sound: data.sound.clone(),
+            image: data
+                .attachments
+                .iter()
+                .map(crate::Attachment::url)
+                .find(|url| url.scheme() == "file")
+                .map(|url| url.as_str().to_owned()),
+            actions,
+        }
+    }
+
     /// Recovers a poisoned lock because losing the handle would dismiss the popup on some daemons.
+    /// `replaced` is the server id this notification took over, whose entry is dropped.
     fn track(
         &self,
         caller_id: i32,
         handle: notify_rust::NotificationHandle,
         title: Option<String>,
         body: Option<String>,
+        replaced: Option<u32>,
     ) -> (u64, std::sync::Arc<notify_rust::NotificationHandle>) {
         let handle = std::sync::Arc::new(handle);
         let entry_id = self
@@ -192,21 +336,25 @@ impl<R: Runtime> Notifications<R> {
             title,
             body,
         };
-        self.active
-            .lock()
-            .unwrap_or_else(|poisoned| {
+        {
+            let mut active = self.active.lock().unwrap_or_else(|poisoned| {
                 log::warn!("active notifications mutex was poisoned; recovering");
                 poisoned.into_inner()
-            })
-            .insert(entry_id, entry);
+            });
+            if let Some(id) = replaced {
+                active.retain(|_, entry| entry.handle.id() != id);
+            }
+            active.insert(entry_id, entry);
+        }
         (entry_id, handle)
     }
 
-    fn forget(&self, entry_id: u64) {
+    fn forget(&self, entry_id: u64) -> bool {
         self.active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&entry_id);
+            .remove(&entry_id)
+            .is_some()
     }
 }
 
@@ -232,6 +380,7 @@ impl<R: Runtime> Notifications<R> {
     ///   * Show up in [`Notifications::active`] alongside local notifications.
     ///   * Can be cancelled via the existing `cancel`/`cancel_all` methods
     ///     (caller id is `0` because `UnifiedPush` messages don't carry one).
+    ///   * Focus the app and emit `notificationClicked` when clicked.
     fn build_push_displayer(app: AppHandle<R>) -> crate::unifiedpush::PushDisplayer {
         std::sync::Arc::new(move |title: Option<String>, body: Option<String>| {
             let app = app.clone();
@@ -257,8 +406,15 @@ impl<R: Runtime> Notifications<R> {
                     Ok(handle) => {
                         use tauri::Manager;
                         let state = app.state::<Self>();
-                        let (entry_id, handle) = state.track(0, handle, title, body);
-                        watch_notification(app.clone(), entry_id, handle, None);
+                        let reply = Reply::new(
+                            0,
+                            title.as_deref(),
+                            body.as_deref(),
+                            None,
+                            &std::collections::HashMap::new(),
+                        );
+                        let (entry_id, handle) = state.track(0, handle, title, body, None);
+                        watch_notification(app.clone(), entry_id, handle, reply);
                     }
                     Err(e) => log::warn!("Failed to show push notification toast: {e}"),
                 }
@@ -271,6 +427,15 @@ impl<R: Runtime> Notifications<R> {
 impl<R: Runtime> crate::NotificationsBuilder<R> {
     pub async fn show(self) -> crate::Result<()> {
         let caller_id = self.data.id;
+        #[cfg(target_os = "linux")]
+        let extras = {
+            use tauri::Manager;
+            self.app.state::<Notifications<R>>().extras(&self.data)
+        };
+        #[cfg(target_os = "linux")]
+        let replaces_id = extras.replaces_id;
+        #[cfg(target_os = "linux")]
+        let action_type_id = self.data.action_type_id.clone();
         let title = self
             .data
             .title
@@ -288,16 +453,18 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
         // Building the notification queries the server too, so all of it runs on a blocking thread.
         let (shown_title, shown_body) = (title.clone(), body.clone());
         let join_result = tauri::async_runtime::spawn_blocking(move || {
-            imp::build_notification(
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+            let mut notification = imp::build_notification(
                 shown_title.as_deref(),
                 shown_body.as_deref(),
                 icon.as_deref(),
                 &identifier,
                 &app_name,
                 desktop_entry.as_deref(),
-            )?
-            .show()
-            .map_err(|e| {
+            )?;
+            #[cfg(target_os = "linux")]
+            apply_extras(&mut notification, extras);
+            notification.show().map_err(|e| {
                 crate::Error::Io(std::io::Error::other(format!(
                     "Failed to show notification: {e}"
                 )))
@@ -316,9 +483,15 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
         {
             use tauri::Manager;
             let state = app.state::<Notifications<R>>();
-            let (entry_id, handle) = state.track(caller_id, handle, title, body);
-            let payload = click_payload(caller_id, &extra);
-            watch_notification(app.clone(), entry_id, handle, Some(payload));
+            let reply = Reply::new(
+                caller_id,
+                title.as_deref(),
+                body.as_deref(),
+                action_type_id.as_deref(),
+                &extra,
+            );
+            let (entry_id, handle) = state.track(caller_id, handle, title, body, replaces_id);
+            watch_notification(app.clone(), entry_id, handle, reply);
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let _ = (handle, caller_id, title, body, app);
@@ -367,9 +540,13 @@ impl<R: Runtime> Notifications<R> {
         &self,
         vapid: Option<String>,
     ) -> crate::Result<crate::models::PushNotificationResponse> {
-        let _ = vapid;
         #[cfg(all(target_os = "linux", feature = "push-notifications"))]
         {
+            if vapid.is_some() {
+                log::warn!(
+                    "Ignoring the VAPID key: the UnifiedPush D-Bus v1 distributor API has no VAPID support"
+                );
+            }
             let state = self.unifiedpush_state().await?;
             let endpoint = state.register().await?;
             Ok(crate::models::PushNotificationResponse::from_token(
@@ -378,6 +555,7 @@ impl<R: Runtime> Notifications<R> {
         }
         #[cfg(not(all(target_os = "linux", feature = "push-notifications")))]
         {
+            let _ = vapid;
             Err(crate::Error::Io(std::io::Error::other(
                 "Push notifications are not supported on desktop platforms",
             )))
@@ -529,10 +707,19 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
+    /// Linux: closes every tracked notification, like [`cancel_all`](Self::cancel_all).
+    /// macOS / Windows: unsupported.
     pub fn remove_all_active(&self) -> crate::Result<()> {
-        Err(crate::Error::Io(std::io::Error::other(
-            "Removing active notifications is not supported with notify-rust",
-        )))
+        #[cfg(target_os = "linux")]
+        {
+            self.cancel_all()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(crate::Error::Io(std::io::Error::other(
+                "Removing active notifications is not supported with notify-rust",
+            )))
+        }
     }
 
     /// Same semantics as [`remove_active`](Self::remove_active) on Linux;
@@ -575,10 +762,26 @@ impl<R: Runtime> Notifications<R> {
         }
     }
 
-    pub fn register_action_types(&self, _types: Vec<crate::ActionType>) -> crate::Result<()> {
-        Err(crate::Error::Io(std::io::Error::other(
-            "Action types are not supported with notify-rust",
-        )))
+    /// Linux: buttons are only shown when the server advertises the `actions` capability.
+    /// macOS / Windows: unsupported.
+    // Existing public signature; switching to `&[ActionType]` would be breaking.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn register_action_types(&self, types: Vec<crate::ActionType>) -> crate::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            self.action_types
+                .lock()
+                .map_err(active_lock_err)?
+                .extend(types.into_iter().map(|t| (t.id().to_owned(), t)));
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = types;
+            Err(crate::Error::Io(std::io::Error::other(
+                "Action types are not supported with notify-rust",
+            )))
+        }
     }
 
     pub fn create_channel(&self, _channel: crate::Channel) -> crate::Result<()> {
@@ -647,9 +850,7 @@ mod imp {
 
         #[cfg(target_os = "linux")]
         {
-            notification
-                .appname(app_name)
-                .hint(notify_rust::Hint::Category("im.received".to_owned()));
+            notification.appname(app_name);
             if let Some(desktop_entry) = desktop_entry {
                 notification.hint(notify_rust::Hint::DesktopEntry(desktop_entry.to_owned()));
             }
@@ -682,7 +883,7 @@ mod imp {
         }
         #[cfg(not(target_os = "linux"))]
         let _ = (app_name, desktop_entry);
-        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(windows, target_os = "macos")))]
         let _ = identifier;
 
         Ok(notification)

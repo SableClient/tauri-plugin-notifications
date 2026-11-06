@@ -391,7 +391,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R, Option<PluginConfig>> {
             #[cfg(mobile)]
             let notification = mobile::init(app, api)?;
             #[cfg(all(desktop, any(feature = "notify-rust", target_os = "linux")))]
-            let notification = desktop::init(app, api)?;
+            let notification = desktop::init(app, &api)?;
             #[cfg(all(target_os = "macos", not(feature = "notify-rust")))]
             let notification = macos::init(app, api)?;
             #[cfg(all(target_os = "windows", not(feature = "notify-rust")))]

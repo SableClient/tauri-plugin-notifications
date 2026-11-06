@@ -1,7 +1,7 @@
 //! `UnifiedPush` D-Bus integration for Linux desktop.
 //!
 //! Implements the connector side of the `UnifiedPush` spec
-//! (<https://unifiedpush.org/spec/dbus/>). The plugin owns a `Connection` to the
+//! (<https://unifiedpush.org/developers/spec/dbus/>). The plugin owns a `Connection` to the
 //! session bus, exposes an `org.unifiedpush.Connector1` interface, and drives
 //! `org.unifiedpush.Distributor1` calls against the user-selected distributor.
 //!
@@ -37,8 +37,12 @@ fn io_err(msg: impl Into<String>) -> crate::Error {
     default_path = "/org/unifiedpush/Distributor"
 )]
 trait Distributor {
-    fn register(&self, connector: &str, token: &str, vapid: &str)
-    -> zbus::Result<(String, String)>;
+    fn register(
+        &self,
+        connector: &str,
+        token: &str,
+        description: &str,
+    ) -> zbus::Result<(String, String)>;
 
     fn unregister(&self, token: &str) -> zbus::Result<()>;
 }
@@ -71,12 +75,13 @@ pub struct UnifiedPushState {
     connector_bus_name: String,
     /// Used as a fallback when an incoming push has no `title` field. The JS
     /// listener's `Options.title` is typed as a required string, so emitting
-    /// `null` would surprise consumers.
+    /// `null` would surprise consumers. Also sent to distributors as the
+    /// registration description.
     fallback_title: String,
     selected: RwLock<Option<String>>,
     token: RwLock<Option<String>>,
     active: RwLock<Option<ActiveRegistration>>,
-    pending: Mutex<HashMap<String, oneshot::Sender<Result<String, String>>>>,
+    pending: Mutex<HashMap<String, oneshot::Sender<String>>>,
     /// Serialises `register` so concurrent calls cannot register the same client token twice.
     register_lock: Mutex<()>,
     /// `None` means "don't display a toast for incoming pushes" — the JS
@@ -169,8 +174,14 @@ impl UnifiedPushState {
             .list_names()
             .await
             .map_err(|e| io_err(format!("Failed to list bus names: {e}")))?;
+        // Activatable names are distributors D-Bus starts on first call.
+        let activatable = dbus
+            .list_activatable_names()
+            .await
+            .map_err(|e| io_err(format!("Failed to list activatable bus names: {e}")))?;
         let mut out: Vec<String> = names
             .into_iter()
+            .chain(activatable)
             .map(|n| n.as_str().to_string())
             .filter(|n| n.starts_with(DISTRIBUTOR_PREFIX))
             .collect();
@@ -260,7 +271,11 @@ impl UnifiedPushState {
         }
 
         let response = proxy
-            .register(&self.connector_bus_name, &client_token, "")
+            .register(
+                &self.connector_bus_name,
+                &client_token,
+                &self.fallback_title,
+            )
             .await;
 
         match response {
@@ -283,10 +298,7 @@ impl UnifiedPushState {
 
         let endpoint =
             match tokio::time::timeout(Duration::from_secs(REGISTER_TIMEOUT_SECS), rx).await {
-                Ok(Ok(Ok(endpoint))) => endpoint,
-                Ok(Ok(Err(reason))) => {
-                    return Err(io_err(format!("Registration failed: {reason}")));
-                }
+                Ok(Ok(endpoint)) => endpoint,
                 Ok(Err(_)) => {
                     return Err(io_err("Registration callback channel closed".to_string()));
                 }
@@ -311,13 +323,20 @@ impl UnifiedPushState {
 
     /// Callers must hold `register_lock`, which is not reentrant.
     async fn unregister_locked(&self) -> crate::Result<()> {
-        // Read first (clone), only clear `self.active` after the D-Bus call
-        // succeeds. Otherwise a transient failure leaves the plugin thinking
-        // it's unregistered while the distributor still has the token.
-        let Some(active) = self.active.read().await.clone() else {
+        // Cleared before the call so the distributor's own `Unregistered`
+        // confirmation is not reported as a revocation; restored on failure so a
+        // transient error doesn't leave the distributor holding the token.
+        let Some(active) = self.active.write().await.take() else {
             return Ok(());
         };
+        let result = self.unregister_with(&active).await;
+        if result.is_err() {
+            *self.active.write().await = Some(active);
+        }
+        result
+    }
 
+    async fn unregister_with(&self, active: &ActiveRegistration) -> crate::Result<()> {
         let proxy = DistributorProxy::builder(&self.connection)
             .destination(active.distributor.clone())
             .map_err(|e| {
@@ -339,10 +358,6 @@ impl UnifiedPushState {
             .unregister(&active.client_token)
             .await
             .map_err(|e| io_err(format!("Distributor Unregister failed: {e}")))?;
-
-        // Only clear after the distributor has acknowledged the unregister.
-        *self.active.write().await = None;
-
         Ok(())
     }
 }
@@ -383,7 +398,25 @@ impl ConnectorService {
         };
         let waiter = state.pending.lock().await.remove(&token);
         if let Some(tx) = waiter {
-            let _ = tx.send(Ok(endpoint));
+            let _ = tx.send(endpoint);
+            return;
+        }
+        // No registration in flight: the distributor rotated the endpoint on its own.
+        let rotated = {
+            let mut guard = state.active.write().await;
+            match guard.as_mut() {
+                Some(active) if active.client_token == token && active.endpoint != endpoint => {
+                    active.endpoint.clone_from(&endpoint);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if rotated {
+            let payload = json!({ "token": endpoint, "rotated": true, "provider": "unifiedpush" });
+            if let Err(e) = crate::listeners::trigger("push-token", payload.to_string()) {
+                log::warn!("Failed to dispatch the rotated UnifiedPush endpoint: {e}");
+            }
         }
     }
 
@@ -391,19 +424,19 @@ impl ConnectorService {
         let Some(state) = self.state.upgrade() else {
             return;
         };
-        let mut guard = state.active.write().await;
-        if guard.as_ref().is_some_and(|a| a.client_token == token) {
-            *guard = None;
-        }
-    }
-
-    async fn registration_failed(&self, token: String, reason: String) {
-        let Some(state) = self.state.upgrade() else {
-            return;
+        let cleared = {
+            let mut guard = state.active.write().await;
+            let matches = guard.as_ref().is_some_and(|a| a.client_token == token);
+            if matches {
+                *guard = None;
+            }
+            matches
         };
-        let waiter = state.pending.lock().await.remove(&token);
-        if let Some(tx) = waiter {
-            let _ = tx.send(Err(reason));
+        if cleared {
+            let payload = json!({ "provider": "unifiedpush" });
+            if let Err(e) = crate::listeners::trigger("push-unregistered", payload.to_string()) {
+                log::warn!("Failed to dispatch the UnifiedPush unregistration: {e}");
+            }
         }
     }
 }

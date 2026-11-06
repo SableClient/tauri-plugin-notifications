@@ -532,6 +532,11 @@ impl Action {
     pub const fn foreground(&self) -> bool {
         self.foreground
     }
+
+    #[must_use]
+    pub const fn input(&self) -> bool {
+        self.input
+    }
 }
 
 pub use android::*;
