@@ -364,7 +364,7 @@ impl<R: Runtime> Notifications<R> {
 
     #[allow(clippy::unused_async)]
     pub async fn can_schedule_exact_alarms(&self) -> crate::Result<bool> {
-        #[cfg(all(target_os = "android", feature = "push-notifications"))]
+        #[cfg(target_os = "android")]
         {
             self.0
                 .run_mobile_plugin_async::<crate::models::ExactAlarmResponse>(
@@ -375,7 +375,7 @@ impl<R: Runtime> Notifications<R> {
                 .map(|r| r.allowed)
                 .map_err(Into::into)
         }
-        #[cfg(not(all(target_os = "android", feature = "push-notifications")))]
+        #[cfg(not(target_os = "android"))]
         {
             Ok(true)
         }
@@ -383,14 +383,14 @@ impl<R: Runtime> Notifications<R> {
 
     #[allow(clippy::unused_async)]
     pub async fn request_schedule_exact_alarms(&self) -> crate::Result<()> {
-        #[cfg(all(target_os = "android", feature = "push-notifications"))]
+        #[cfg(target_os = "android")]
         {
             self.0
                 .run_mobile_plugin_async::<()>("requestScheduleExactAlarms", ())
                 .await
                 .map_err(Into::into)
         }
-        #[cfg(not(all(target_os = "android", feature = "push-notifications")))]
+        #[cfg(not(target_os = "android"))]
         {
             Ok(())
         }

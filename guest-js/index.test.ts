@@ -1136,6 +1136,7 @@ describe("Notification Functions", () => {
         { active: true },
       );
       expect(listener).toHaveProperty("unregister");
+      await listener.unregister();
     });
 
     it("should notify native side on unregister", async () => {
@@ -1162,15 +1163,18 @@ describe("Notification Functions", () => {
 
       mockAddPluginListener.mockImplementation((_plugin, _event, cb) => {
         capturedCallback = cb;
-        return Promise.resolve(vi.fn());
+        return Promise.resolve({
+          unregister: vi.fn().mockResolvedValue(undefined),
+        });
       });
 
       const callback = vi.fn();
-      await onNotificationClicked(callback);
+      const listener = await onNotificationClicked(callback);
 
       capturedCallback?.(mockClickedData);
 
       expect(callback).toHaveBeenCalledWith(mockClickedData);
+      await listener.unregister();
     });
 
     it("should handle notification click without data", async () => {
@@ -1179,16 +1183,48 @@ describe("Notification Functions", () => {
 
       mockAddPluginListener.mockImplementation((_plugin, _event, cb) => {
         capturedCallback = cb;
-        return Promise.resolve(vi.fn());
+        return Promise.resolve({
+          unregister: vi.fn().mockResolvedValue(undefined),
+        });
       });
 
       const callback = vi.fn();
-      await onNotificationClicked(callback);
+      const listener = await onNotificationClicked(callback);
 
       capturedCallback?.(mockClickedData);
 
       expect(callback).toHaveBeenCalledWith(mockClickedData);
       expect(callback.mock.calls[0][0].data).toBeUndefined();
+      await listener.unregister();
+    });
+
+    it("keeps native click delivery until the last listener unregisters", async () => {
+      mockAddPluginListener.mockResolvedValue({
+        unregister: vi.fn().mockResolvedValue(undefined),
+      });
+      mockInvoke.mockResolvedValue(undefined);
+
+      const first = await onNotificationClicked(vi.fn());
+      const second = await onNotificationClicked(vi.fn());
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      await first.unregister();
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      await second.unregister();
+      expect(mockInvoke).toHaveBeenLastCalledWith(
+        "plugin:notifications|set_click_listener_active",
+        { active: false },
+      );
+    });
+
+    it("unregisters the channel when activation fails", async () => {
+      const unregister = vi.fn().mockResolvedValue(undefined);
+      mockAddPluginListener.mockResolvedValue({ unregister });
+      mockInvoke.mockRejectedValueOnce(new Error("activation failed"));
+
+      await expect(onNotificationClicked(vi.fn())).rejects.toThrow(
+        "activation failed",
+      );
+      expect(unregister).toHaveBeenCalled();
     });
   });
 });

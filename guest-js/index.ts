@@ -504,9 +504,10 @@ type PushProvider = "auto" | "fcm" | "unifiedpush" | "embedded";
 /**
  * Registers the app for push notifications.
  *
- * `deviceToken` is the APNs token on iOS and the UnifiedPush endpoint URL on
- * Android/Linux. Pass a base64url VAPID public key to register against a Web
- * Push distributor; `p256dh` and `auth` are then set on the result.
+ * `deviceToken` is the APNs token on iOS and macOS, the UnifiedPush endpoint URL on
+ * Android and Linux, and the WNS channel URI on Windows. On Android, pass a base64url
+ * VAPID public key to register against a Web Push distributor; `p256dh` and `auth`
+ * are then set on the result. Other platforms ignore `vapid`.
  *
  * `embeddedGatewayUrl` enables the in-app distributor on Android, used when neither FCM
  * nor an installed distributor can deliver.
@@ -884,19 +885,52 @@ async function onNotificationReceived(
 async function onAction(
   cb: (action: ActionPerformedData) => void,
 ): Promise<PluginListener> {
-  const listener = await addPluginListener(
-    "notifications",
-    "actionPerformed",
-    cb,
+  return await addNativeListener(actionListeners, "actionPerformed", cb);
+}
+
+// Native delivery stays on until the last JS listener of the event unregisters.
+interface NativeListenerGate {
+  command: string;
+  count: number;
+  lock: Promise<void>;
+}
+
+const actionListeners: NativeListenerGate = {
+  command: "plugin:notifications|set_action_listener_active",
+  count: 0,
+  lock: Promise.resolve(),
+};
+
+const clickListeners: NativeListenerGate = {
+  command: "plugin:notifications|set_click_listener_active",
+  count: 0,
+  lock: Promise.resolve(),
+};
+
+function withGateLock<T>(
+  gate: NativeListenerGate,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const result = gate.lock.then(() => operation());
+  gate.lock = result.then(
+    () => undefined,
+    () => undefined,
   );
+  return result;
+}
+
+async function addNativeListener<T>(
+  gate: NativeListenerGate,
+  event: string,
+  cb: (payload: T) => void,
+): Promise<PluginListener> {
+  const listener = await addPluginListener("notifications", event, cb);
   try {
-    await withActionListenerLock(async () => {
-      if (actionListenerCount === 0) {
-        await invoke("plugin:notifications|set_action_listener_active", {
-          active: true,
-        });
+    await withGateLock(gate, async () => {
+      if (gate.count === 0) {
+        await invoke(gate.command, { active: true });
       }
-      actionListenerCount += 1;
+      gate.count += 1;
     });
   } catch (error) {
     await listener.unregister();
@@ -909,16 +943,14 @@ async function onAction(
     unregister: () =>
       (inFlight ??= (async () => {
         try {
-          await withActionListenerLock(async () => {
-            if (actionListenerCount > 1) {
-              actionListenerCount -= 1;
+          await withGateLock(gate, async () => {
+            if (gate.count > 1) {
+              gate.count -= 1;
               return;
             }
             // Keep the final listener until native deactivation succeeds.
-            await invoke("plugin:notifications|set_action_listener_active", {
-              active: false,
-            });
-            actionListenerCount = 0;
+            await invoke(gate.command, { active: false });
+            gate.count = 0;
           });
         } catch (error) {
           inFlight = undefined;
@@ -927,18 +959,6 @@ async function onAction(
         await listener.unregister();
       })()),
   } as PluginListener;
-}
-
-let actionListenerCount = 0;
-let actionListenerLock = Promise.resolve();
-
-function withActionListenerLock<T>(operation: () => Promise<T>): Promise<T> {
-  const result = actionListenerLock.then(() => operation());
-  actionListenerLock = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
 }
 
 /**
@@ -974,26 +994,7 @@ interface NotificationClickedData {
 async function onNotificationClicked(
   cb: (data: NotificationClickedData) => void,
 ): Promise<PluginListener> {
-  const listener = await addPluginListener(
-    "notifications",
-    "notificationClicked",
-    cb,
-  );
-
-  // Tell native side listener is active (triggers pending if any)
-  await invoke("plugin:notifications|set_click_listener_active", {
-    active: true,
-  });
-
-  // Return wrapped listener that notifies native side on unregister
-  return {
-    unregister: async () => {
-      await invoke("plugin:notifications|set_click_listener_active", {
-        active: false,
-      });
-      return listener.unregister();
-    },
-  } as PluginListener;
+  return await addNativeListener(clickListeners, "notificationClicked", cb);
 }
 
 export type {
