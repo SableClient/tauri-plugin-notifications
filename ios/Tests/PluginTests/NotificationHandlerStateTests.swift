@@ -100,4 +100,71 @@ final class NotificationHandlerStateTests: XCTestCase {
     XCTAssertEqual(handler.pendingClickIds, [])
     XCTAssertTrue(handler.deliversClick(NotificationClickedData(id: 11, data: nil)))
   }
+
+  func testEveryDayFollowsTheWallClockInsteadOfAFixedInterval() throws {
+    let day = try XCTUnwrap(
+      try handleScheduledNotification(.every(interval: .day, count: 1)) as? UNCalendarNotificationTrigger)
+    XCTAssertTrue(day.repeats)
+    XCTAssertNotNil(day.dateComponents.hour)
+    XCTAssertNil(day.dateComponents.day)
+
+    let month = try XCTUnwrap(
+      try handleScheduledNotification(.every(interval: .month, count: 1)) as? UNCalendarNotificationTrigger)
+    XCTAssertNotNil(month.dateComponents.day)
+    XCTAssertNil(month.dateComponents.month)
+
+    let year = try XCTUnwrap(
+      try handleScheduledNotification(.every(interval: .year, count: 1)) as? UNCalendarNotificationTrigger)
+    XCTAssertNotNil(year.dateComponents.month)
+
+    let week = try XCTUnwrap(
+      try handleScheduledNotification(.every(interval: .week, count: 1)) as? UNCalendarNotificationTrigger)
+    XCTAssertNotNil(week.dateComponents.weekday)
+
+    let everyTwoDays = try XCTUnwrap(
+      try handleScheduledNotification(.every(interval: .day, count: 2)) as? UNTimeIntervalNotificationTrigger)
+    XCTAssertEqual(everyTwoDays.timeInterval, 2 * 86400, accuracy: 1)
+  }
+
+  func testRepeatingAtMatchesTheWallClockTime() throws {
+    let future = Date().addingTimeInterval(7200)
+    let schedule = NotificationSchedule.at(
+      date: ISO8601DateFormatter().string(from: future), repeating: true)
+    let trigger = try XCTUnwrap(try handleScheduledNotification(schedule) as? UNCalendarNotificationTrigger)
+    let expected = Calendar.current.dateComponents([.hour, .minute, .second], from: future)
+    XCTAssertTrue(trigger.repeats)
+    XCTAssertEqual(trigger.dateComponents.hour, expected.hour)
+    XCTAssertEqual(trigger.dateComponents.minute, expected.minute)
+    XCTAssertEqual(trigger.dateComponents.second, expected.second)
+  }
+
+  func testAttachmentOptionsUseTheTypesUserNotificationsExpects() throws {
+    let options = NotificationAttachmentOptions(
+      iosUNNotificationAttachmentOptionsTypeHintKey: nil,
+      iosUNNotificationAttachmentOptionsThumbnailHiddenKey: "true",
+      iosUNNotificationAttachmentOptionsThumbnailClippingRectKey: "0.1,0.2,0.5,0.6",
+      iosUNNotificationAttachmentOptionsThumbnailTimeKey: "2.5")
+    let result = makeAttachmentOptions(options)
+    XCTAssertEqual(result[UNNotificationAttachmentOptionsThumbnailHiddenKey] as? NSNumber, true)
+    XCTAssertEqual(result[UNNotificationAttachmentOptionsThumbnailTimeKey] as? NSNumber, 2.5)
+    let rect = CGRect(
+      dictionaryRepresentation: try XCTUnwrap(
+        result[UNNotificationAttachmentOptionsThumbnailClippingRectKey] as CFTypeRef?) as! CFDictionary)
+    XCTAssertEqual(rect, CGRect(x: 0.1, y: 0.2, width: 0.5, height: 0.6))
+
+    let bad = NotificationAttachmentOptions(
+      iosUNNotificationAttachmentOptionsTypeHintKey: nil,
+      iosUNNotificationAttachmentOptionsThumbnailHiddenKey: "maybe",
+      iosUNNotificationAttachmentOptionsThumbnailClippingRectKey: "1,2",
+      iosUNNotificationAttachmentOptionsThumbnailTimeKey: "soon")
+    XCTAssertTrue(makeAttachmentOptions(bad).isEmpty)
+  }
+
+  func testAttachingLeavesTheSourceFileInPlace() throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+    try Data([0x89]).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    _ = try request(#"{"id":1,"title":"t","attachments":[{"id":"a","url":"\#(file.absoluteString)"}]}"#)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+  }
 }

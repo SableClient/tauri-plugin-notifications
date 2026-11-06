@@ -175,7 +175,7 @@ extension Encodable {
   }
 }
 
-func showNotification(notification: Notification) async throws(FFIResult) -> UNNotificationRequest {
+func showNotification(notification: Notification) async throws(FFIResult) {
   var content: UNNotificationContent
   do {
     content = try makeNotificationContent(notification)
@@ -195,17 +195,31 @@ func showNotification(notification: Notification) async throws(FFIResult) -> UNN
 
   // Schedule the request.
   let request = UNNotificationRequest(
-    identifier: "\(notification.id)", content: content, trigger: trigger
+    identifier: notificationRequestIdentifier(notification), content: content, trigger: trigger
   )
 
   let center = UNUserNotificationCenter.current()
   do {
+    if request.trigger == nil && content.userInfo["event_id"] != nil {
+      let delivered = await center.deliveredNotifications()
+      let matching = delivered.filter {
+        NotificationHandler.matchesMessage($0.request.content.userInfo, content.userInfo)
+      }
+      if !matching.isEmpty {
+        guard !matching.contains(where: { $0.request.content.body == content.body }) else { return }
+        // Enrichment changes content, not the event: replace it without a second sound.
+        guard let updated = content.mutableCopy() as? UNMutableNotificationContent else { return }
+        updated.sound = nil
+        center.removeDeliveredNotifications(withIdentifiers: matching.map { $0.request.identifier })
+        try await center.add(
+          UNNotificationRequest(identifier: request.identifier, content: updated, trigger: nil))
+        return
+      }
+    }
     try await center.add(request)
   } catch {
     throw FFIResult.Err(RustString(error.localizedDescription))
   }
-
-  return request
 }
 
 class NotificationPlugin {
@@ -220,6 +234,7 @@ class NotificationPlugin {
       let timer: Timer
     }
     private var pushTokenWaiters = [PushTokenWaiter]()
+    var isRegisteringPush: Bool { !pushTokenWaiters.isEmpty }
     private var nextPushTokenWaiterId: UInt64 = 0
     private let pushTokenTimeout: TimeInterval = 10.0
   #endif
@@ -240,8 +255,8 @@ class NotificationPlugin {
   public func show(args: RustString) async throws(FFIResult) -> Int32 {
     let notification = try args.decode(Notification.self)
 
-    let request = try await showNotification(notification: notification)
-    return Int32(request.identifier) ?? -1
+    try await showNotification(notification: notification)
+    return Int32(truncatingIfNeeded: notification.id)
   }
 
   public func requestPermissions() async throws(FFIResult) -> String {
@@ -344,11 +359,14 @@ class NotificationPlugin {
 
   public func removeActive(args: RustString) throws(FFIResult) {
     let args = try args.decode(RemoveActiveArgs.self)
-    if args.notifications.isEmpty {
-      try removeAllActive()
-    } else {
-      UNUserNotificationCenter.current().removeDeliveredNotifications(
-        withIdentifiers: args.notifications.map { String($0.id) })
+    let ids = Set(args.notifications.map { $0.id })
+    guard !ids.isEmpty else { return }
+    let center = UNUserNotificationCenter.current()
+    center.getDeliveredNotifications { [weak self] delivered in
+      guard let handler = self?.notificationHandler else { return }
+      center.removeDeliveredNotifications(
+        withIdentifiers: delivered.filter { handler.matches($0.request, ids: ids) }
+          .map { $0.request.identifier })
     }
   }
 

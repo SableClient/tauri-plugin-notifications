@@ -5,19 +5,22 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
   weak var plugin: NotificationPlugin?
 
   private var hasClickedListener = false
-  private var pendingNotificationClick: NotificationClickedData? = nil
+  private var pendingNotificationClicks = [NotificationClickedData]()
   private var hasActionListener = false
   private var pendingNotificationActions = [ReceivedNotification]()
   private let maxPendingActions = 32
+  private let maxPendingClicks = 8
   private let stateLock = NSRecursiveLock()
 
   func setClickListenerActive(_ active: Bool) {
     stateLock.lock()
     hasClickedListener = active
-    let pending = active ? pendingNotificationClick : nil
-    if pending != nil { pendingNotificationClick = nil }
+    let pending = active ? pendingNotificationClicks : []
+    if active { pendingNotificationClicks.removeAll() }
     stateLock.unlock()
-    if let pending { self.plugin?.emit("notificationClicked", data: pending) }
+    for click in pending {
+      self.plugin?.emit("notificationClicked", data: click)
+    }
   }
 
   func setActionListenerActive(_ active: Bool) {
@@ -85,7 +88,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     let content = request.content
 
     return ReceivedNotificationData(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: content.title,
       body: content.body,
       extra: Self.notificationExtra(content.userInfo)
@@ -132,18 +135,31 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       return
     }
 
+    let id = Int(originalNotificationRequest.identifier)
+      ?? roomNotificationId(originalNotificationRequest.content.userInfo) ?? -1
     let clickedData = NotificationClickedData(
-      id: Int(originalNotificationRequest.identifier) ?? -1,
+      id: id,
       data: Self.notificationExtra(originalNotificationRequest.content.userInfo)
     )
-    let shouldTriggerClick = hasClickedListener
-    if !shouldTriggerClick {
-      // No listener (cold-start), store for later
-      pendingNotificationClick = clickedData
-    }
+    let shouldTriggerClick = deliversClick(clickedData)
     stateLock.unlock()
     if shouldTriggerAction { self.plugin?.emit("actionPerformed", data: action) }
     if shouldTriggerClick { self.plugin?.emit("notificationClicked", data: clickedData) }
+  }
+
+  func deliversClick(_ click: NotificationClickedData) -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    if hasClickedListener { return true }
+    if pendingNotificationClicks.count >= maxPendingClicks { pendingNotificationClicks.removeFirst() }
+    pendingNotificationClicks.append(click)
+    return false
+  }
+
+  var pendingClickIds: [Int] {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return pendingNotificationClicks.map(\.id)
   }
 
   static func localOrigin(_ userInfo: [AnyHashable: Any]) -> LocalOrigin? {
@@ -156,7 +172,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
       return nil
     }
     return ActiveNotification(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
       sound: origin.sound ?? "",
@@ -168,7 +184,7 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
 
   func toRemoteActionNotification(_ request: UNNotificationRequest) -> ActiveNotification {
     ActiveNotification(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
       sound: "",
@@ -217,12 +233,33 @@ public class NotificationHandler: NSObject, NotificationHandlerProtocol {
     return extra.isEmpty ? nil : extra
   }
 
+  func roomNotificationId(_ userInfo: [AnyHashable: Any]) -> Int? {
+    guard let extra = Self.notificationExtra(userInfo),
+          let user = extra["user_id"], !user.isEmpty,
+          let room = extra["room_id"], !room.isEmpty else { return nil }
+    let hash = (user + "\u{0}" + room).utf16.reduce(Int32(0)) { ($0 &* 31) &+ Int32($1) }
+    return hash == Int32.min ? 0 : Int(hash.magnitude)
+  }
+
+  static func matchesMessage(_ first: [AnyHashable: Any], _ second: [AnyHashable: Any]) -> Bool {
+    guard let first = notificationExtra(first), let second = notificationExtra(second) else { return false }
+    return ["user_id", "room_id", "event_id"].allSatisfy { key in
+      guard let value = first[key], !value.isEmpty else { return false }
+      return value == second[key]
+    }
+  }
+
+  func matches(_ request: UNNotificationRequest, ids: Set<Int>) -> Bool {
+    if let numeric = Int(request.identifier), ids.contains(numeric) { return true }
+    return roomNotificationId(request.content.userInfo).map { ids.contains($0) } ?? false
+  }
+
   func toPendingNotification(_ request: UNNotificationRequest) -> PendingNotification? {
     guard let schedule = Self.localOrigin(request.content.userInfo)?.schedule else {
       return nil
     }
     return PendingNotification(
-      id: Int(request.identifier) ?? -1,
+      id: Int(request.identifier) ?? roomNotificationId(request.content.userInfo) ?? -1,
       title: request.content.title,
       body: request.content.body,
       schedule: schedule

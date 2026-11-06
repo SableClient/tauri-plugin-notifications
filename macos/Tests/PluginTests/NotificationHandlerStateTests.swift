@@ -41,3 +41,16 @@ final class ReceivedNotificationExtraTests: XCTestCase {
     XCTAssertNil(extra?["aps"])
   }
 }
+
+final class PendingClickTests: XCTestCase {
+  func testClicksBeforeAListenerAreQueuedUpToTheBound() {
+    let handler = NotificationHandler()
+    for id in 1...10 {
+      XCTAssertFalse(handler.deliversClick(NotificationClickedData(id: id, data: nil)))
+    }
+    XCTAssertEqual(handler.pendingClickIds, Array(3...10))
+    handler.setClickListenerActive(true)
+    XCTAssertEqual(handler.pendingClickIds, [])
+    XCTAssertTrue(handler.deliversClick(NotificationClickedData(id: 11, data: nil)))
+  }
+}

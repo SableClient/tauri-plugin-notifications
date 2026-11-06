@@ -103,12 +103,42 @@ final class LocalOriginTests: XCTestCase {
   }
 
   func testMarkerRoundTripsSilentSoundAndAttachments() throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+    try Data([0x89]).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
     let content = try content(
-      #"{"id":7,"title":"t","silent":true,"sound":"ping","attachments":[{"id":"a","url":"file:///x.png"}]}"#)
+      #"{"id":7,"title":"t","silent":true,"sound":"ping","attachments":[{"id":"a","url":"\#(file.absoluteString)"}]}"#)
     let origin = try XCTUnwrap(NotificationHandler.localOrigin(content.userInfo))
     XCTAssertEqual(origin.silent, true)
     XCTAssertEqual(origin.sound, "ping")
-    XCTAssertEqual(origin.attachments?.first?.url, "file:///x.png")
+    XCTAssertEqual(origin.attachments?.first?.url, file.absoluteString)
+  }
+
+  func testAttachingLeavesTheSourceFileInPlace() throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+    try Data([0x89]).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    _ = try content(#"{"id":1,"title":"t","attachments":[{"id":"a","url":"\#(file.absoluteString)"}]}"#)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+  }
+
+  func testMessageNotificationsAreKeyedByConversationAndEvent() throws {
+    func message(_ event: String) throws -> PluginNotification {
+      try decodeNotification(
+        #"{"id":42,"title":"Room","body":"b","extra":{"user_id":"@a:x","room_id":"!r:x","event_id":"\#(event)"}}"#)
+    }
+    let first = try message("$1"), second = try message("$2")
+    XCTAssertNotEqual(notificationRequestIdentifier(first), notificationRequestIdentifier(second))
+    XCTAssertEqual(
+      try makeNotificationContent(first).threadIdentifier,
+      try makeNotificationContent(second).threadIdentifier)
+    let handler = NotificationHandler()
+    let content = try makeNotificationContent(second)
+    let id = try XCTUnwrap(handler.roomNotificationId(content.userInfo))
+    XCTAssertTrue(handler.matches(request(notificationRequestIdentifier(second), content: content), ids: [id]))
+    XCTAssertEqual(handler.toActiveNotification(request(notificationRequestIdentifier(second), content: content))?.id, id)
+    XCTAssertEqual(try decodeNotification(#"{"id":5}"#).id, 5)
+    XCTAssertEqual(notificationRequestIdentifier(try decodeNotification(#"{"id":5}"#)), "5")
   }
 
   func testActiveAndPendingAreRebuiltFromTheRequest() throws {

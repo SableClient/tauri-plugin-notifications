@@ -18,24 +18,27 @@ enum AppDelegateSwizzler {
     }
     guard !swizzled else { return }
     guard let delegate = NSApplication.shared.delegate else { return }
-    swizzled = true
     let cls: AnyClass = type(of: delegate)
 
-    install(
-      cls,
-      #selector(NSApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:)),
-      #selector(PushForwarder.ta_application(_:didRegisterForRemoteNotificationsWithDeviceToken:))
-    )
-    install(
-      cls,
-      #selector(NSApplicationDelegate.application(_:didFailToRegisterForRemoteNotificationsWithError:)),
-      #selector(PushForwarder.ta_application(_:didFailToRegisterForRemoteNotificationsWithError:))
-    )
-    install(
-      cls,
-      #selector(NSApplicationDelegate.application(_:didReceiveRemoteNotification:)),
-      #selector(PushForwarder.ta_application(_:didReceiveRemoteNotification:))
-    )
+    let installed = [
+      install(
+        cls,
+        #selector(NSApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:)),
+        #selector(PushForwarder.ta_application(_:didRegisterForRemoteNotificationsWithDeviceToken:))
+      ),
+      install(
+        cls,
+        #selector(NSApplicationDelegate.application(_:didFailToRegisterForRemoteNotificationsWithError:)),
+        #selector(PushForwarder.ta_application(_:didFailToRegisterForRemoteNotificationsWithError:))
+      ),
+      install(
+        cls,
+        #selector(NSApplicationDelegate.application(_:didReceiveRemoteNotification:)),
+        #selector(PushForwarder.ta_application(_:didReceiveRemoteNotification:))
+      ),
+    ]
+    guard !installed.contains(false) else { return }
+    swizzled = true
 
     retainedDelegate = delegate
     // AppKit caches which delegate selectors exist at assignment, so reassign to pick up the new ones.
@@ -43,15 +46,20 @@ enum AppDelegateSwizzler {
     NSApplication.shared.delegate = delegate
   }
 
-  static func install(_ cls: AnyClass, _ selector: Selector, _ replacement: Selector) {
-    guard let replacementMethod = class_getInstanceMethod(PushForwarder.self, replacement) else { return }
+  @discardableResult
+  static func install(_ cls: AnyClass, _ selector: Selector, _ replacement: Selector) -> Bool {
+    guard let replacementMethod = class_getInstanceMethod(PushForwarder.self, replacement) else { return false }
     // class_replaceMethod returns nil for an inherited implementation, so capture it first.
     let effectiveIMP = class_getInstanceMethod(cls, selector).map(method_getImplementation)
+    let replacementIMP = method_getImplementation(replacementMethod)
     let ownIMP = class_replaceMethod(
-      cls, selector, method_getImplementation(replacementMethod), method_getTypeEncoding(replacementMethod))
+      cls, selector, replacementIMP, method_getTypeEncoding(replacementMethod))
+    // A retry after a partial install must not record the forwarder as the original.
+    if ownIMP == replacementIMP { return true }
     if let original = ownIMP ?? effectiveIMP {
       originalIMPs[selector] = original
     }
+    return true
   }
 
   fileprivate static func callOriginalDidRegister(
@@ -84,9 +92,10 @@ final class PushForwarder: NSObject {
   @objc func ta_application(_ application: NSApplication,
                             didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+    let rotated = AppDelegateSwizzler.plugin?.isRegisteringPush == false
 
     AppDelegateSwizzler.plugin?.handlePushTokenReceived(hex)
-    AppDelegateSwizzler.plugin?.emit("push-token", data: ["token": hex])
+    AppDelegateSwizzler.plugin?.emitJSON("push-token", object: ["token": hex, "rotated": rotated])
 
     AppDelegateSwizzler.callOriginalDidRegister(
       self,

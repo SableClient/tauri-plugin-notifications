@@ -23,6 +23,25 @@ enum NotificationError: LocalizedError {
   }
 }
 
+/// The conversation keys of a message-keyed notification, nil for any other.
+private func messageKeys(_ notification: Notification) -> (user: String, room: String, event: String?)? {
+  func string(_ key: String) -> String? {
+    if case .string(let value) = notification.extra?[key], !value.isEmpty { return value }
+    return nil
+  }
+  guard let user = string("user_id"), let room = string("room_id") else { return nil }
+  return (user, room, string("event_id"))
+}
+
+func notificationRequestIdentifier(_ notification: Notification) -> String {
+  guard notification.schedule == nil,
+        let keys = messageKeys(notification), let event = keys.event,
+        let data = try? JSONSerialization.data(withJSONObject: [keys.user, keys.room, event]) else {
+    return String(notification.id)
+  }
+  return "message:" + data.base64EncodedString()
+}
+
 let localOriginKey = "__tauriNotificationLocal"
 
 struct LocalOrigin: Codable {
@@ -66,7 +85,9 @@ func makeNotificationContent(_ notification: Notification) throws -> UNNotificat
     content.categoryIdentifier = actionTypeId
   }
 
-  if let threadIdentifier = notification.group {
+  if let keys = messageKeys(notification) {
+    content.threadIdentifier = keys.user + "\u{0}" + keys.room
+  } else if let threadIdentifier = notification.group {
     content.threadIdentifier = threadIdentifier
   }
 
@@ -96,9 +117,19 @@ func makeAttachments(_ attachments: [NotificationAttachment]) throws -> [UNNotif
 
     let options = attachment.options != nil ? makeAttachmentOptions(attachment.options!) : nil
 
+    // The system moves the attached file into its store when the request is added, so attach a copy.
+    let scratch = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+
     do {
+      var source = urlObject
+      if urlObject.isFileURL {
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        source = scratch.appendingPathComponent(urlObject.lastPathComponent)
+        try FileManager.default.copyItem(at: urlObject, to: source)
+      }
       let newAttachment = try UNNotificationAttachment(
-        identifier: attachment.id, url: urlObject, options: options)
+        identifier: attachment.id, url: source, options: options)
       createdAttachments.append(newAttachment)
     } catch {
       throw NotificationError.attachmentUnableToCreate(error.localizedDescription)
@@ -121,17 +152,24 @@ func makeAttachmentOptions(_ options: NotificationAttachmentOptions) -> [AnyHash
   if let value = options.iosUNNotificationAttachmentOptionsTypeHintKey {
     opts[UNNotificationAttachmentOptionsTypeHintKey] = value
   }
-  if let value = options.iosUNNotificationAttachmentOptionsThumbnailHiddenKey {
-    opts[UNNotificationAttachmentOptionsThumbnailHiddenKey] = value
-  }
-  if let value = options.iosUNNotificationAttachmentOptionsThumbnailClippingRectKey {
-    opts[UNNotificationAttachmentOptionsThumbnailClippingRectKey] = value
-  }
-  if let value = options
-    .iosUNNotificationAttachmentOptionsThumbnailTimeKey
-
+  if let value = options.iosUNNotificationAttachmentOptionsThumbnailHiddenKey,
+    let hidden = Bool(value.lowercased())
   {
-    opts[UNNotificationAttachmentOptionsThumbnailTimeKey] = value
+    opts[UNNotificationAttachmentOptionsThumbnailHiddenKey] = NSNumber(value: hidden)
+  }
+  // Accepts "x,y,width,height" or "{{x, y}, {width, height}}".
+  if let value = options.iosUNNotificationAttachmentOptionsThumbnailClippingRectKey {
+    let numbers = value.components(separatedBy: CharacterSet(charactersIn: "{}, "))
+      .filter { !$0.isEmpty }.compactMap(Double.init)
+    if numbers.count == 4 {
+      let rect = CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
+      opts[UNNotificationAttachmentOptionsThumbnailClippingRectKey] = rect.dictionaryRepresentation
+    }
+  }
+  if let value = options.iosUNNotificationAttachmentOptionsThumbnailTimeKey,
+    let seconds = Double(value)
+  {
+    opts[UNNotificationAttachmentOptionsThumbnailTimeKey] = NSNumber(value: seconds)
   }
   return opts
 }
@@ -156,32 +194,27 @@ func handleScheduledNotification(_ schedule: NotificationSchedule) throws
 {
   switch schedule {
   case .at(let date, let repeating):
-    if let at = parseScheduleDate(date) {
-      let dateInfo = Calendar.current.dateComponents(in: TimeZone.current, from: at)
-
-      if dateInfo.date! < Date() {
-        // TODO:
-        //Logger.debug("Scheduled time is in the past: \(dateInfo.date!) < \(Date())")
-        throw NotificationError.pastScheduledTime
-      }
-
-      let dateInterval = DateInterval(start: Date(), end: dateInfo.date!)
-
-      // Notifications that repeat have to be at least a minute between each other
-      if repeating && dateInterval.duration < 60 {
-        throw NotificationError.triggerRepeatIntervalTooShort
-      }
-
-      return UNTimeIntervalNotificationTrigger(
-        timeInterval: dateInterval.duration, repeats: repeating)
-
-    } else {
+    guard let at = parseScheduleDate(date) else {
       throw NotificationError.invalidDate(date)
     }
+    let now = Date()
+    if repeating {
+      // Repeats daily at the same wall-clock time, so a past start date is fine.
+      return calendarTrigger([.hour, .minute, .second], from: at)
+    }
+    guard at > now else {
+      throw NotificationError.pastScheduledTime
+    }
+    return UNTimeIntervalNotificationTrigger(timeInterval: at.timeIntervalSince(now), repeats: false)
   case .interval(let interval):
     let dateComponents = getDateComponents(interval)
     return UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
   case .every(let interval, let count):
+    // Calendar triggers follow wall-clock time across DST and month lengths but
+    // cannot express a multiple of the unit, so those keep a fixed interval.
+    if count == 1, let units = calendarUnits(interval) {
+      return calendarTrigger(units, from: Date())
+    }
     if let repeatDateInterval = getRepeatDateInterval(interval, count) {
       // Notifications that repeat have to be at least a minute between each other
       if repeatDateInterval.duration < 60 {
@@ -194,6 +227,24 @@ func handleScheduledNotification(_ schedule: NotificationSchedule) throws
   }
 
   return nil
+}
+
+private func calendarUnits(_ every: ScheduleEveryKind) -> Set<Calendar.Component>? {
+  let time: Set<Calendar.Component> = [.hour, .minute, .second]
+  switch every {
+  case .day: return time
+  case .week: return time.union([.weekday])
+  case .month: return time.union([.day])
+  case .year: return time.union([.month, .day])
+  case .twoWeeks, .hour, .minute, .second: return nil
+  }
+}
+
+private func calendarTrigger(_ units: Set<Calendar.Component>, from date: Date)
+  -> UNCalendarNotificationTrigger
+{
+  UNCalendarNotificationTrigger(
+    dateMatching: Calendar.current.dateComponents(units, from: date), repeats: true)
 }
 
 /// Given our schedule format, return a DateComponents object

@@ -20,24 +20,27 @@ enum AppDelegateSwizzler {
     }
     guard !swizzled else { return }
     guard let delegate = UIApplication.shared.delegate else { return }
-    swizzled = true
     let cls: AnyClass = type(of: delegate)
 
-    install(
-      cls,
-      #selector(UIApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:)),
-      #selector(PushForwarder.ta_application(_:didRegisterForRemoteNotificationsWithDeviceToken:))
-    )
-    install(
-      cls,
-      #selector(UIApplicationDelegate.application(_:didFailToRegisterForRemoteNotificationsWithError:)),
-      #selector(PushForwarder.ta_application(_:didFailToRegisterForRemoteNotificationsWithError:))
-    )
-    install(
-      cls,
-      #selector(UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)),
-      #selector(PushForwarder.ta_application(_:didReceiveRemoteNotification:fetchCompletionHandler:))
-    )
+    let installed = [
+      install(
+        cls,
+        #selector(UIApplicationDelegate.application(_:didRegisterForRemoteNotificationsWithDeviceToken:)),
+        #selector(PushForwarder.ta_application(_:didRegisterForRemoteNotificationsWithDeviceToken:))
+      ),
+      install(
+        cls,
+        #selector(UIApplicationDelegate.application(_:didFailToRegisterForRemoteNotificationsWithError:)),
+        #selector(PushForwarder.ta_application(_:didFailToRegisterForRemoteNotificationsWithError:))
+      ),
+      install(
+        cls,
+        #selector(UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)),
+        #selector(PushForwarder.ta_application(_:didReceiveRemoteNotification:fetchCompletionHandler:))
+      ),
+    ]
+    guard !installed.contains(false) else { return }
+    swizzled = true
 
     // UIKit caches which delegate selectors exist at assignment, so reassign to pick up the new ones.
     retainedDelegate = delegate
@@ -45,13 +48,18 @@ enum AppDelegateSwizzler {
     UIApplication.shared.delegate = delegate
   }
 
-  static func install(_ cls: AnyClass, _ selector: Selector, _ replacement: Selector) {
-    guard let replacementMethod = class_getInstanceMethod(PushForwarder.self, replacement) else { return }
+  @discardableResult
+  static func install(_ cls: AnyClass, _ selector: Selector, _ replacement: Selector) -> Bool {
+    guard let replacementMethod = class_getInstanceMethod(PushForwarder.self, replacement) else { return false }
     // class_replaceMethod returns nil for an inherited implementation, so capture it first.
     let effectiveIMP = class_getInstanceMethod(cls, selector).map(method_getImplementation)
+    let replacementIMP = method_getImplementation(replacementMethod)
     let ownIMP = class_replaceMethod(
-      cls, selector, method_getImplementation(replacementMethod), method_getTypeEncoding(replacementMethod))
+      cls, selector, replacementIMP, method_getTypeEncoding(replacementMethod))
+    // A retry after a partial install must not record the forwarder as the original.
+    if ownIMP == replacementIMP { return true }
     originalIMPs[selector] = ownIMP ?? effectiveIMP
+    return true
   }
 
   fileprivate static func callOriginalDidRegister(
