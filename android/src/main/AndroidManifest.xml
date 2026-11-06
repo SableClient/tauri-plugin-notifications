@@ -36,40 +36,9 @@
                 <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
             </intent-filter>
         </service>
-
-        <!-- Embedded UnifiedPush distributor: holds the gateway websocket open when
-             neither FCM nor a third-party distributor can deliver. -->
-        <service
-            android:name="app.tauri.notification.EmbeddedPushService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Holds the connection to the user's push gateway so chat messages are delivered when Google Play Services or another UnifiedPush distributor is not available. The ongoing notification shows that this connection is active." />
-        </service>
-
-        <receiver
-            android:name="app.tauri.notification.EmbeddedPushAlarmReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name="app.tauri.notification.EmbeddedPushBootReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
-            </intent-filter>
-        </receiver>
     </application>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Only exact alarms may start the push service from the background on Android 12+. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

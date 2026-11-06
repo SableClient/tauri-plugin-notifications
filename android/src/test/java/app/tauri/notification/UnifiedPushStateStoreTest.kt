@@ -91,4 +91,32 @@ class UnifiedPushStateStoreTest {
         // Re-registering must not silently fall back to a Google-backed distributor.
         assertTrue(newStore().useEmbeddedDistributor)
     }
+
+    @Test
+    fun restoredEmbeddedRegistrationWithForeignKeysIsCleared() {
+        val store = newStore()
+        store.markEmbedded()
+        store.endpoint = "https://ntfy.sh/up0123456789ab?up=1"
+        store.p256dh = "key-from-the-old-device"
+
+        val reopened = newStore()
+
+        assertNull(reopened.endpoint)
+        assertNull(reopened.p256dh)
+        assertNull(reopened.activeProvider)
+    }
+
+    @Test
+    fun embeddedRegistrationWithOwnKeysIsKept() {
+        val store = newStore()
+        val keys = EmbeddedWebPushKeys.publicKeys(RuntimeEnvironment.getApplication())!!
+        store.markEmbedded()
+        store.endpoint = "https://ntfy.sh/up0123456789ab?up=1"
+        store.p256dh = keys.p256dh
+
+        val reopened = newStore()
+
+        assertEquals(keys.p256dh, reopened.p256dh)
+        assertEquals(PushProvider.EMBEDDED, reopened.activeProvider)
+    }
 }

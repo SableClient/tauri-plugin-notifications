@@ -6,3 +6,9 @@
 
 -keep enum app.tauri.notification.Importance { *; }
 -keep enum app.tauri.notification.Visibility { *; }
+
+# PushDelegate implementations are instantiated reflectively from the
+# app.tauri.notification.PUSH_DELEGATE manifest meta-data.
+-keep class * implements app.tauri.notification.PushDelegate {
+    <init>();
+}

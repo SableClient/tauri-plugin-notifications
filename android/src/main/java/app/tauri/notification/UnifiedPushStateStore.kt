@@ -24,6 +24,15 @@ internal class UnifiedPushStateStore(private val context: Context) {
     val replayCompleted: String?,
   )
 
+  init {
+    // Prefs are backed up but the embedded keys are not, so a restored registration
+    // would advertise a p256dh whose private key is gone.
+    val stored = p256dh
+    if (stored != null && isEmbeddedActive && EmbeddedWebPushKeys.publicKeys(context)?.p256dh.let { it != null && it != stored }) {
+      clearRegistration(clearProvider = true)
+    }
+  }
+
   var activeProvider: String?
     get() = prefs.getString("push-provider", null)?.takeUnless { it == PushProvider.NONE }
       ?: if (!prefs.contains("push-provider") && UnifiedPush.getSavedDistributor(context) != null) "unifiedpush" else null

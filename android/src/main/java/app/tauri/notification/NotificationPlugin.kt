@@ -28,6 +28,7 @@ import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.ArrayDeque
+import java.util.Date
 
 const val LOCAL_NOTIFICATIONS = "permissionState"
 private const val MAX_PENDING_ACTIONS = 32
@@ -343,10 +344,19 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     }
   }
 
+  private fun isInPast(notification: Notification): Boolean {
+    val schedule = notification.schedule
+    return schedule is NotificationSchedule.At && !schedule.repeating && schedule.date.before(Date())
+  }
+
   @Command
   fun show(invoke: Invoke) {
     val notification = invoke.parseArgs(Notification::class.java)
     notification.sourceJson = invoke.getRawArgs()
+    if (isInPast(notification)) {
+      invoke.reject("Scheduled time must be after the current time")
+      return
+    }
 
     val id = manager.schedule(notification)
     if (notification.schedule != null) {
@@ -362,6 +372,11 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     val mapper = jsonMapper()
     for (notification in args.notifications) {
       notification.sourceJson = mapper.writeValueAsString(notification)
+    }
+
+    if (args.notifications.any { isInPast(it) }) {
+      invoke.reject("Scheduled time must be after the current time")
+      return
     }
 
     val ids = manager.schedule(args.notifications)
@@ -461,6 +476,8 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     } else {
       if (getPermissionState(LOCAL_NOTIFICATIONS) !== PermissionState.GRANTED) {
         requestPermissionForAlias(LOCAL_NOTIFICATIONS, invoke, "permissionsCallback")
+      } else {
+        permissionState(invoke)
       }
     }
   }
@@ -813,6 +830,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
   }
 
   fun onUnifiedPushUnregistered(instance: String) {
+    trigger("push-unregistered", JSObject().put("provider", "unifiedpush").put("instance", instance))
   }
 
   fun onUnifiedPushTemporaryUnavailable(instance: String) {

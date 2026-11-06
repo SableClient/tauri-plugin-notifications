@@ -39,6 +39,12 @@ class UnifiedPushReceiver : PushService() {
     }
 
     override fun onUnregistered(instance: String) {
+        val state = UnifiedPushStateStore(this)
+        if (!state.acceptsUnifiedPush(instance)) return
+        PushSubscriptions(this).forget(instance)
+        if (instance == (state.activeInstance ?: UnifiedPushStateStore.INSTANCE)) {
+            state.clearRegistration(clearProvider = true)
+        }
         NotificationPlugin.instance?.onUnifiedPushUnregistered(instance)
     }
 
@@ -47,9 +53,12 @@ class UnifiedPushReceiver : PushService() {
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
-        val content = String(message.content, Charsets.UTF_8)
         val state = UnifiedPushStateStore(this)
         if (!state.acceptsUnifiedPush(instance)) return
+        // The connector falls back to the raw body when decryption fails. With keys
+        // published, anyone who knows the endpoint could otherwise inject a notification.
+        if (!message.decrypted && state.p256dh != null) return
+        val content = String(message.content, Charsets.UTF_8)
         // The delegate owns cold rendering; JS retires alerts for active/read rooms.
         PushDelegates.get(this).schedule(this, content)
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)

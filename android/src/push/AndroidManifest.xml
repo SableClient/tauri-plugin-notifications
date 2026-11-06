@@ -1,0 +1,34 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application>
+        <!-- Embedded UnifiedPush distributor: holds the gateway websocket open when
+             neither FCM nor a third-party distributor can deliver. -->
+        <service
+            android:name="app.tauri.notification.EmbeddedPushService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Holds the connection to the user's push gateway so chat messages are delivered when Google Play Services or another UnifiedPush distributor is not available. The ongoing notification shows that this connection is active." />
+        </service>
+
+        <receiver
+            android:name="app.tauri.notification.EmbeddedPushAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="app.tauri.notification.EmbeddedPushBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

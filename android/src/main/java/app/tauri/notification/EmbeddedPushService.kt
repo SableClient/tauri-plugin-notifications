@@ -428,7 +428,7 @@ class EmbeddedPushService : Service() {
             manager.getNotificationChannel(CHANNEL_ID) == null
         ) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_MIN)
+                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW)
                     .apply { description = CHANNEL_DESCRIPTION },
             )
         }
@@ -436,7 +436,7 @@ class EmbeddedPushService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(CHANNEL_NAME)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()
 

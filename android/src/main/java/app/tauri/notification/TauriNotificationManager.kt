@@ -100,7 +100,7 @@ class TauriNotificationManager(
       channel.description = description
       val audioAttributes = AudioAttributes.Builder()
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-        .setUsage(AudioAttributes.USAGE_ALARM)
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
         .build()
       val soundUri = getDefaultSoundUrl(context)
       if (soundUri != null) {
@@ -331,6 +331,9 @@ class TauriNotificationManager(
     intent.putExtra(NOTIFICATION_OBJ_INTENT_KEY, notification.sourceJson)
     val schedule = notification.schedule
     intent.putExtra(NOTIFICATION_IS_REMOVABLE_KEY, schedule == null || schedule.isRemovable())
+    // PendingIntent identity ignores extras; the identifier keeps request-code collisions
+    // from overwriting another notification's action payload.
+    if (SDK_INT >= Build.VERSION_CODES.Q) intent.identifier = "${notification.id}/${action.orEmpty()}"
     return intent
   }
 
@@ -349,22 +352,20 @@ class TauriNotificationManager(
     )
     notificationIntent.putExtra(NOTIFICATION_INTENT_KEY, request.id)
     notificationIntent.putExtra(TimedNotificationPublisher.NOTIFICATION_KEY, notification)
-    var flags = PendingIntent.FLAG_CANCEL_CURRENT
-    if (SDK_INT >= Build.VERSION_CODES.S) {
-      flags = flags or PendingIntent.FLAG_MUTABLE
-    }
+    val flags = PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
     var pendingIntent =
       PendingIntent.getBroadcast(context, request.id, notificationIntent, flags)
 
     when (schedule) {
       is NotificationSchedule.At -> {
-        if (schedule.date.time < Date().time) {
+        if (!schedule.repeating && schedule.date.time < Date().time) {
           Logger.error(Logger.tags(TAG), "Scheduled time must be *after* current time", null)
           return
         }
         if (schedule.repeating) {
-          val interval: Long = schedule.date.time - Date().time
-          alarmManager.setRepeating(AlarmManager.RTC, schedule.date.time, interval, pendingIntent)
+          notificationIntent.putExtra(TimedNotificationPublisher.DAILY_FROM_KEY, schedule.date.time)
+          pendingIntent = PendingIntent.getBroadcast(context, request.id, notificationIntent, flags)
+          setExactIfPossible(alarmManager, schedule, nextDailyTrigger(schedule.date.time, Date().time), pendingIntent)
         } else {
           setExactIfPossible(alarmManager, schedule, schedule.date.time, pendingIntent)
         }
@@ -426,10 +427,7 @@ class TauriNotificationManager(
 
   private fun cancelTimerForNotification(notificationId: Int) {
     val intent = Intent(context, TimedNotificationPublisher::class.java)
-    var flags = 0
-    if (SDK_INT >= Build.VERSION_CODES.S) {
-      flags = PendingIntent.FLAG_MUTABLE
-    }
+    val flags = PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
     val pi = PendingIntent.getBroadcast(context, notificationId, intent, flags)
     if (pi != null) {
       val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -500,6 +498,12 @@ class NotificationDismissReceiver : BroadcastReceiver() {
   }
 }
 
+private const val DAY_MS = 24L * 60 * 60 * 1000
+
+/** First `from + k days` strictly after `now` (or `from` itself while it is still ahead). */
+internal fun nextDailyTrigger(from: Long, now: Long): Long =
+  if (from > now) from else from + ((now - from) / DAY_MS + 1) * DAY_MS
+
 class TimedNotificationPublisher : BroadcastReceiver() {
   /**
    * Restore and present notification
@@ -550,15 +554,16 @@ class TimedNotificationPublisher : BroadcastReceiver() {
   @SuppressLint("MissingPermission", "SimpleDateFormat")
   private fun rescheduleNotificationIfNeeded(context: Context, intent: Intent, id: Int): Boolean {
     val dateString = intent.getStringExtra(CRON_KEY)
-    if (dateString != null) {
-      val date = DateMatch.fromMatchString(dateString)
+    val dailyFrom = intent.getLongExtra(DAILY_FROM_KEY, Long.MIN_VALUE)
+    if (dateString != null || dailyFrom != Long.MIN_VALUE) {
       val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-      val trigger = date.nextTrigger(Date())
-      val clone = intent.clone() as Intent
-      var flags = PendingIntent.FLAG_CANCEL_CURRENT
-      if (SDK_INT >= Build.VERSION_CODES.S) {
-        flags = flags or PendingIntent.FLAG_MUTABLE
+      val trigger = if (dateString != null) {
+        DateMatch.fromMatchString(dateString).nextTrigger(Date())
+      } else {
+        nextDailyTrigger(dailyFrom, System.currentTimeMillis())
       }
+      val clone = intent.clone() as Intent
+      val flags = PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
       val pendingIntent = PendingIntent.getBroadcast(context, id, clone, flags)
       if (SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
         alarmManager[AlarmManager.RTC, trigger] = pendingIntent
@@ -578,6 +583,7 @@ class TimedNotificationPublisher : BroadcastReceiver() {
   companion object {
     var NOTIFICATION_KEY = "NotificationPublisher.notification"
     var CRON_KEY = "NotificationPublisher.cron"
+    const val DAILY_FROM_KEY = "NotificationPublisher.dailyFrom"
   }
 }
 
@@ -597,7 +603,7 @@ class LocalNotificationRestoreReceiver : BroadcastReceiver() {
     for (id in ids) {
       val notification = storage.getSavedNotification(id) ?: continue
       val schedule = notification.schedule
-      if (schedule != null && schedule is NotificationSchedule.At) {
+      if (schedule is NotificationSchedule.At && !schedule.repeating) {
         val at: Date = schedule.date
         if (at.before(Date())) {
           // modify the scheduled date in order to show notifications that would have been delivered while device was off.

@@ -16,6 +16,8 @@ val buildProperties = Properties().apply {
     }
 }
 
+val enablePush = buildProperties.getProperty("enablePushNotifications", "false").toBoolean()
+
 android {
     namespace = "app.tauri.notification"
     compileSdk = 36
@@ -27,8 +29,16 @@ android {
         consumerProguardFiles("consumer-rules.pro")
 
         // Enable push notifications based on Cargo feature flag
-        val enablePush = buildProperties.getProperty("enablePushNotifications", "false").toBoolean()
         buildConfigField("boolean", "ENABLE_PUSH_NOTIFICATIONS", "$enablePush")
+    }
+
+    // The embedded distributor's service, permissions and boot receiver only merge into
+    // apps that enabled the push feature. A source set holds one manifest, so it rides
+    // on the build types rather than on main or the flavors.
+    if (enablePush) {
+        listOf("debug", "release").forEach {
+            sourceSets.getByName(it).manifest.srcFile("src/push/AndroidManifest.xml")
+        }
     }
 
     // FCM pulls proprietary Google libraries that FOSS repos reject.
@@ -82,8 +92,6 @@ configurations.all {
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.work:work-runtime:2.11.2")
-    implementation("androidx.appcompat:appcompat:1.7.1")
-    implementation("com.google.android.material:material:1.14.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
 
     "gmsImplementation"("com.google.android.gms:play-services-base:18.9.0")

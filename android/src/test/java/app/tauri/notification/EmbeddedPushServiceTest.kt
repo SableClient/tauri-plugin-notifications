@@ -751,4 +751,12 @@ class EmbeddedPushServiceTest {
             assertEquals(beforeRetry + 1, connections.size)
         }
     }
+
+    @Test
+    fun foregroundServiceChannelIsLowImportance() {
+        start()
+
+        val manager = service.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        assertEquals(NotificationManager.IMPORTANCE_LOW, manager.getNotificationChannel("embedded-push").importance)
+    }
 }
