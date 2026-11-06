@@ -15,7 +15,8 @@ use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::{DateTime, TypedEventHandler};
 #[cfg(feature = "push-notifications")]
 use windows::Networking::PushNotifications::{
-    PushNotificationChannel, PushNotificationChannelManager,
+    PushNotificationChannel, PushNotificationChannelManager, PushNotificationReceivedEventArgs,
+    PushNotificationType,
 };
 use windows::UI::Notifications::{
     NotificationSetting, ScheduledToastNotification, ToastActivatedEventArgs, ToastFailedEventArgs,
@@ -79,6 +80,10 @@ fn resolve_toast_image_src<R: Runtime>(
     packaged: bool,
 ) -> Option<String> {
     let lower = input.to_ascii_lowercase();
+    if is_unc(&lower) {
+        log::warn!("Ignoring notification image {input:?}: network share paths are not loaded");
+        return None;
+    }
     if lower.starts_with("http://")
         || lower.starts_with("https://")
         || lower.starts_with("ms-appx://")
@@ -113,6 +118,19 @@ fn resolve_toast_image_src<R: Runtime>(
          absolute path, and not resolvable as a Tauri resource"
     );
     None
+}
+
+/// `\\server\share`, `//server/share` and `file://server/share` all point at a network share
+/// that Windows would reach out to (leaking NTLM credentials) when loading the image.
+fn is_unc(lower: &str) -> bool {
+    let rest = lower.strip_prefix("file:").unwrap_or(lower);
+    let is_slash = |c: char| c == '/' || c == '\\';
+    let mut chars = rest.chars();
+    if !(chars.next().is_some_and(is_slash) && chars.next().is_some_and(is_slash)) {
+        return false;
+    }
+    // `file:///C:/x` has an empty host and is a local path.
+    chars.next().is_some_and(|c| !is_slash(c))
 }
 
 /// Convert a filesystem path to a `file:///` URI Windows accepts (forward
@@ -166,11 +184,11 @@ pub struct WindowsPlugin {
 /// the cold-start case where Windows launches the exe via the manifest's
 /// `windows.toastNotificationActivation` extension.
 ///
-/// Wired up by `init()` only when the process has MSIX package identity AND
-/// the plugin config carries a valid `toast_activator_clsid`. The callback
-/// fires on a COM RPC worker thread (not the Tauri main thread), so all
-/// downstream emissions must be thread-safe — `crate::listeners::trigger`
-/// already is.
+/// Wired up by `init()` when a CLSID is available: the configured one for a
+/// packaged app, or the registered one for an unpackaged app. The class is
+/// registered in the STA of the thread that ran `init`, so COM dispatches the
+/// callback through that thread's message loop. `focus` still goes through
+/// `run_on_main_thread` since `init` is not guaranteed to run on it.
 #[implement(INotificationActivationCallback)]
 struct ToastActivator {
     plugin: Weak<WindowsPlugin>,
@@ -287,12 +305,21 @@ impl WindowsPlugin {
             .drain(event, |payload| self.trigger(event, payload));
     }
 
-    fn open_push_channel(&self) -> crate::Result<String> {
+    fn open_push_channel(&self, fallback_title: String) -> crate::Result<String> {
         #[cfg(feature = "push-notifications")]
         {
             let channel =
                 PushNotificationChannelManager::CreatePushNotificationChannelForApplicationAsync()?
                     .get()?;
+            channel.PushNotificationReceived(&TypedEventHandler::new(
+                move |_: Ref<'_, PushNotificationChannel>,
+                      args: Ref<'_, PushNotificationReceivedEventArgs>| {
+                    if let Some(args) = &*args {
+                        deliver_push(args, &fallback_title);
+                    }
+                    Ok(())
+                },
+            ))?;
             let uri = channel.Uri()?.to_string_lossy();
             *self
                 .push_channel
@@ -303,6 +330,7 @@ impl WindowsPlugin {
         }
         #[cfg(not(feature = "push-notifications"))]
         {
+            let _ = fallback_title;
             Err(crate::Error::Io(std::io::Error::other(
                 "Push notifications feature not enabled",
             )))
@@ -328,6 +356,78 @@ impl WindowsPlugin {
                 "Push notifications feature not enabled",
             )))
         }
+    }
+}
+
+/// Forwards a WNS push to listeners in the shape the Linux `UnifiedPush` handler emits.
+/// Toast pushes are left uncancelled so Windows still shows them.
+#[cfg(feature = "push-notifications")]
+fn deliver_push(args: &PushNotificationReceivedEventArgs, fallback_title: &str) {
+    let (title, body, extra) = match args.NotificationType() {
+        Ok(PushNotificationType::Raw) => {
+            let Some(text) = args
+                .RawNotification()
+                .and_then(|raw| raw.Content())
+                .ok()
+                .map(|content| content.to_string_lossy())
+            else {
+                return;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                return deliver_notification(
+                    None,
+                    Some(text),
+                    serde_json::json!({}),
+                    fallback_title,
+                );
+            };
+            let text_field = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_owned);
+            let extra = match value.get("data").or_else(|| value.get("extra")) {
+                Some(serde_json::Value::Object(map)) => serde_json::Value::Object(map.clone()),
+                Some(other) => serde_json::json!({ "_raw": other }),
+                None => serde_json::json!({}),
+            };
+            (
+                text_field("title"),
+                text_field("body").or_else(|| text_field("message")),
+                extra,
+            )
+        }
+        Ok(PushNotificationType::Toast) => {
+            let texts = args
+                .ToastNotification()
+                .and_then(|toast| toast.Content())
+                .and_then(|content| content.GetElementsByTagName(&HSTRING::from("text")))
+                .ok();
+            let text_at = |index| {
+                texts
+                    .as_ref()
+                    .and_then(|texts| texts.GetAt(index).ok())
+                    .and_then(|el| el.InnerText().ok())
+                    .map(|s| s.to_string_lossy())
+            };
+            (text_at(0), text_at(1), serde_json::json!({}))
+        }
+        _ => return,
+    };
+    deliver_notification(title, body, extra, fallback_title);
+}
+
+#[cfg(feature = "push-notifications")]
+fn deliver_notification(
+    title: Option<String>,
+    body: Option<String>,
+    extra: serde_json::Value,
+    fallback_title: &str,
+) {
+    let payload = serde_json::json!({
+        "source": "push",
+        "title": title.unwrap_or_else(|| fallback_title.to_owned()),
+        "body": body,
+        "extra": extra,
+    });
+    if let Err(e) = crate::listeners::trigger("notification", payload.to_string()) {
+        log::warn!("Failed to dispatch push notification to listeners: {e}");
     }
 }
 
@@ -647,9 +747,18 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
             audio.SetAttribute(&HSTRING::from("silent"), &HSTRING::from("true"))?;
             toast.AppendChild(&audio)?;
         } else if let Some(sound) = &self.data.sound {
-            let audio = doc.CreateElement(&HSTRING::from("audio"))?;
-            audio.SetAttribute(&HSTRING::from("src"), &HSTRING::from(sound.as_str()))?;
-            toast.AppendChild(&audio)?;
+            // Toasts only play ms-appx:/ms-resource: files or ms-winsoundevent: names; anything else is dropped.
+            let lower = sound.to_ascii_lowercase();
+            if ["ms-appx:", "ms-resource:", "ms-winsoundevent:"]
+                .iter()
+                .any(|scheme| lower.starts_with(scheme))
+            {
+                let audio = doc.CreateElement(&HSTRING::from("audio"))?;
+                audio.SetAttribute(&HSTRING::from("src"), &HSTRING::from(sound.as_str()))?;
+                toast.AppendChild(&audio)?;
+            } else {
+                log::warn!("Ignoring notification sound {sound:?}: using the default sound");
+            }
         }
 
         Ok(doc)
@@ -695,12 +804,13 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
             ))?;
 
             if !self.plugin.has_com_activator() {
-                let plugin = self.plugin.clone();
+                let plugin = Arc::downgrade(&self.plugin);
 
                 toast.Activated(&TypedEventHandler::new(
                     move |_: windows::core::Ref<'_, ToastNotification>,
                           args: windows::core::Ref<'_, windows::core::IInspectable>| {
-                        if let Some(inspectable) = &*args
+                        if let Some(plugin) = plugin.upgrade()
+                            && let Some(inspectable) = &*args
                             && let Ok(activated) = inspectable.cast::<ToastActivatedEventArgs>()
                         {
                             let arguments = activated
@@ -741,10 +851,30 @@ impl<R: Runtime> crate::NotificationsBuilder<R> {
 /// Convert Schedule to Windows DateTime.
 fn schedule_to_datetime(schedule: &Schedule) -> crate::Result<DateTime> {
     let now = time::OffsetDateTime::now_utc();
+    let unsupported = |what: &str| {
+        crate::Error::Io(std::io::Error::other(format!(
+            "{what} schedules are not supported on Windows; only a single future delivery time is"
+        )))
+    };
 
     let delivery_time = match schedule {
-        Schedule::At { date, .. } => *date,
+        Schedule::At {
+            date, repeating, ..
+        } => {
+            if *repeating {
+                return Err(unsupported("Repeating"));
+            }
+            if *date <= now {
+                return Err(crate::Error::Io(std::io::Error::other(
+                    "Schedule date must be in the future",
+                )));
+            }
+            *date
+        }
         Schedule::Interval { interval, .. } => {
+            if interval.year.is_some() || interval.month.is_some() || interval.weekday.is_some() {
+                return Err(unsupported("Calendar-matching"));
+            }
             // Build duration from interval fields
             let seconds = interval.second.unwrap_or(0) as i64;
             let minutes = interval.minute.unwrap_or(0) as i64;
@@ -753,21 +883,7 @@ fn schedule_to_datetime(schedule: &Schedule) -> crate::Result<DateTime> {
             let total_seconds = seconds + minutes * 60 + hours * 3600 + days * 86400;
             now + time::Duration::seconds(total_seconds)
         }
-        Schedule::Every {
-            interval, count, ..
-        } => {
-            let base_seconds: i64 = match interval {
-                ScheduleEvery::Year => 365 * 86400,
-                ScheduleEvery::Month => 30 * 86400,
-                ScheduleEvery::TwoWeeks => 14 * 86400,
-                ScheduleEvery::Week => 7 * 86400,
-                ScheduleEvery::Day => 86400,
-                ScheduleEvery::Hour => 3600,
-                ScheduleEvery::Minute => 60,
-                ScheduleEvery::Second => 1,
-            };
-            now + time::Duration::seconds(base_seconds * (*count as i64))
-        }
+        Schedule::Every { .. } => return Err(unsupported("Repeating")),
     };
 
     unix_to_windows_datetime(delivery_time)
@@ -820,8 +936,14 @@ impl<R: Runtime> Notifications<R> {
         &self,
         _vapid: Option<String>,
     ) -> crate::Result<PushNotificationResponse> {
+        let fallback_title = self
+            .app
+            .config()
+            .product_name
+            .clone()
+            .unwrap_or_else(|| self.plugin.app_id.clone());
         self.plugin
-            .open_push_channel()
+            .open_push_channel(fallback_title)
             .map(PushNotificationResponse::from_token)
     }
 
@@ -1125,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_schedule_at_conversion() {
-        let target = time::macros::datetime!(2025-12-25 10:00:00 UTC);
+        let target = time::macros::datetime!(2099-12-25 10:00:00 UTC);
         let schedule = Schedule::At {
             date: target,
             repeating: false,
@@ -1162,38 +1284,49 @@ mod tests {
     }
 
     #[test]
-    fn test_schedule_every_variants() {
-        let cases = [
-            (ScheduleEvery::Second, 1, 1i64),
-            (ScheduleEvery::Minute, 1, 60),
-            (ScheduleEvery::Hour, 1, 3600),
-            (ScheduleEvery::Day, 1, 86400),
-            (ScheduleEvery::Week, 1, 7 * 86400),
-            (ScheduleEvery::TwoWeeks, 1, 14 * 86400),
-            (ScheduleEvery::Month, 1, 30 * 86400),
-            (ScheduleEvery::Year, 1, 365 * 86400),
-        ];
+    fn test_schedule_rejects_repeating_and_past() {
+        let past = Schedule::At {
+            date: time::macros::datetime!(2000-01-01 00:00:00 UTC),
+            repeating: false,
+            allow_while_idle: false,
+        };
+        assert!(schedule_to_datetime(&past).is_err());
 
-        for (interval, count, expected) in cases {
-            let schedule = Schedule::Every {
-                interval,
-                count,
-                allow_while_idle: false,
-            };
+        let repeating = Schedule::At {
+            date: time::macros::datetime!(2099-01-01 00:00:00 UTC),
+            repeating: true,
+            allow_while_idle: false,
+        };
+        assert!(schedule_to_datetime(&repeating).is_err());
 
-            let before = time::OffsetDateTime::now_utc();
-            let result = schedule_to_datetime(&schedule)
-                .unwrap_or_else(|e| panic!("Failed to convert {:?}: {}", interval, e));
-            let converted = windows_datetime_to_unix(result)
-                .unwrap_or_else(|e| panic!("Failed to convert back {:?}: {}", interval, e));
-            let actual = (converted - before).whole_seconds();
-            assert!(
-                (actual - expected).abs() <= 2,
-                "{:?}: {} vs {}",
-                interval,
-                actual,
-                expected
-            );
+        let every = Schedule::Every {
+            interval: ScheduleEvery::Day,
+            count: 1,
+            allow_while_idle: false,
+        };
+        assert!(schedule_to_datetime(&every).is_err());
+
+        let calendar = Schedule::Interval {
+            interval: ScheduleInterval {
+                month: Some(1),
+                ..ScheduleInterval::default()
+            },
+            allow_while_idle: false,
+        };
+        assert!(schedule_to_datetime(&calendar).is_err());
+    }
+
+    #[test]
+    fn test_unc_paths_are_detected() {
+        for unc in [
+            r"\\server\share\a.png",
+            "//server/share/a.png",
+            "file://server/share/a.png",
+        ] {
+            assert!(is_unc(&unc.to_ascii_lowercase()), "{unc}");
+        }
+        for local in [r"C:\a.png", "file:///C:/a.png", "/a.png", "https://x/a.png"] {
+            assert!(!is_unc(&local.to_ascii_lowercase()), "{local}");
         }
     }
 

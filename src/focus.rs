@@ -9,10 +9,11 @@ pub fn focus_app<R: Runtime>(app: &AppHandle<R>) {
 }
 
 fn focus_window<R: Runtime>(app: &AppHandle<R>) {
-    let Some(window) = app
-        .get_webview_window("main")
-        .or_else(|| app.webview_windows().into_values().next())
-    else {
+    let mut windows = app.webview_windows();
+    let Some(window) = windows.remove("main").or_else(|| {
+        let label = windows.keys().min()?.clone();
+        windows.remove(&label)
+    }) else {
         return;
     };
     if let Err(e) = window.unminimize() {
