@@ -36,10 +36,11 @@ class UnifiedPushReceiverTest {
 
     private fun receiver() = Robolectric.buildService(UnifiedPushReceiver::class.java).create().get()
 
-    private fun registerUnifiedPush(p256dh: String?) {
+    private fun registerUnifiedPush(p256dh: String?, vapid: String? = "vapid") {
         state.activeProvider = PushProvider.UNIFIED_PUSH
         state.activeInstance = UnifiedPushStateStore.INSTANCE
         state.p256dh = p256dh
+        state.vapid = vapid
     }
 
     private fun message(body: String, decrypted: Boolean) = PushMessage(body.toByteArray(), decrypted)
@@ -69,6 +70,39 @@ class UnifiedPushReceiverTest {
         receiver().onMessage(message("plain", decrypted = false), UnifiedPushStateStore.INSTANCE)
 
         assertEquals(listOf("plain"), delegate.scheduled)
+    }
+
+    @Test
+    fun plainMessagesAreAcceptedForADirectRegistrationWithConnectorKeys() {
+        registerUnifiedPush("p256dh", vapid = null)
+
+        receiver().onMessage(message("plain", decrypted = false), UnifiedPushStateStore.INSTANCE)
+
+        assertEquals(listOf("plain"), delegate.scheduled)
+    }
+
+    @Test
+    fun anotherAccountsDirectRegistrationAcceptsPlainMessagesWhileTheActiveOneIsKeyed() {
+        registerUnifiedPush("p256dh")
+        val subscriptions = PushSubscriptions(context)
+        val direct = subscriptions.instance("@b:example.org", "DEVICEB", null)
+        subscriptions.remember(direct)
+
+        receiver().onMessage(message("plain", decrypted = false), direct)
+
+        assertEquals(listOf("plain"), delegate.scheduled)
+    }
+
+    @Test
+    fun anotherAccountsKeyedRegistrationDropsPlainMessagesWhileTheActiveOneIsDirect() {
+        registerUnifiedPush("p256dh", vapid = null)
+        val subscriptions = PushSubscriptions(context)
+        val keyed = subscriptions.instance("@b:example.org", "DEVICEB", "vapid")
+        subscriptions.remember(keyed)
+
+        receiver().onMessage(message("forged", decrypted = false), keyed)
+
+        assertTrue(delegate.scheduled.isEmpty())
     }
 
     @Test

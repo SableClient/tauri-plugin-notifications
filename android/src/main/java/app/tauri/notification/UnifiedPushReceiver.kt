@@ -57,7 +57,11 @@ class UnifiedPushReceiver : PushService() {
         if (!state.acceptsUnifiedPush(instance)) return
         // The connector falls back to the raw body when decryption fails. With keys
         // published, anyone who knows the endpoint could otherwise inject a notification.
-        if (!message.decrypted && state.p256dh != null) return
+        // A registration without VAPID is direct: the connector still makes keys, but the
+        // server never gets them and pushes plain text.
+        val direct = PushSubscriptions(this).registeredWithoutVapid(instance)
+            ?: (instance == state.activeInstance && state.vapid == null)
+        if (!message.decrypted && state.p256dh != null && !direct) return
         val content = String(message.content, Charsets.UTF_8)
         // The delegate owns cold rendering; JS retires alerts for active/read rooms.
         PushDelegates.get(this).schedule(this, content)

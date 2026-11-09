@@ -22,6 +22,12 @@ internal class PushSubscriptions(context: Context) {
         }
     }
 
+    /** Null for an instance this store did not create. */
+    fun registeredWithoutVapid(instance: String): Boolean? = synchronized(LOCK) {
+        val entries = entries()
+        entries.keys().asSequence().firstOrNull { entries.getString(it) == instance }?.let { JSONArray(it).isNull(2) }
+    }
+
     fun remember(instance: String) = synchronized(LOCK) {
         if (!contains(instance)) write(entries(), instances() + instance)
     }
