@@ -304,22 +304,23 @@ class EmbeddedPushService : Service() {
             release(push)
             return
         }
-        val body = decrypt(sealed)
+        val opened = decrypt(sealed)
         if (!owns(owner)) {
             release(push)
             return
         }
-        if (body == null) {
+        if (opened == null) {
             // Retrying cannot change the outcome, so it would only replay on every reconnect.
             state.completeEmbeddedPush(owner.endpoint, push.id)
             release(push)
             return
         }
+        val (body, encrypted) = opened
         record("EMBEDDED_DECRYPTED")
         val delegate = PushDelegates.get(this)
         val activation = delegate.isActivation(body)
         try {
-            delegate.render(this, body)
+            delegate.render(this, body, encrypted)
         } catch (error: RuntimeException) {
             Log.w(TAG, "Could not display the push notification", error)
             noteFailure(push)
@@ -330,7 +331,7 @@ class EmbeddedPushService : Service() {
                 release(push)
                 return@postPush
             }
-            if (activation) delegate.schedule(this, body)
+            if (activation) delegate.schedule(this, body, encrypted)
             NotificationPlugin.instance?.onUnifiedPushMessage(body, UnifiedPushStateStore.INSTANCE)
             executePush(push) {
                 if (owns(owner) && !state.completeEmbeddedPush(owner.endpoint, push.id)) {
@@ -407,14 +408,14 @@ class EmbeddedPushService : Service() {
     }
 
     /** The gateway relays the body untouched, so it is still encrypted to our keys. */
-    private fun decrypt(sealed: ByteArray): String? {
+    private fun decrypt(sealed: ByteArray): Pair<String, Boolean>? {
         val keysPublished = state.p256dh != null && state.auth != null
         if (keysPublished) {
-            EmbeddedWebPushKeys.decrypt(this, sealed)?.let { return String(it) }
+            EmbeddedWebPushKeys.decrypt(this, sealed)?.let { return String(it) to true }
         } else if (sealed.isNotEmpty() && sealed[0] == '{'.code.toByte()) {
             // Only a registration made without keys expects plaintext. With keys published,
             // anyone who knows the topic could otherwise inject a notification.
-            return String(sealed)
+            return String(sealed) to false
         }
 
         record("EMBEDDED_DECRYPT_FAILED")

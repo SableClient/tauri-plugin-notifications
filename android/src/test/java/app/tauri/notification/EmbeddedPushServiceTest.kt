@@ -553,6 +553,7 @@ class EmbeddedPushServiceTest {
         frame(0, message("A"))
 
         verify(exactly = 1) { plugin.onUnifiedPushMessage(any(), any()) }
+        assertEquals(delegate.rendered + delegate.scheduled, delegate.unencrypted)
     }
 
     @Test

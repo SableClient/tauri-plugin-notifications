@@ -64,7 +64,7 @@ class UnifiedPushReceiver : PushService() {
         if (!message.decrypted && state.p256dh != null && !direct) return
         val content = String(message.content, Charsets.UTF_8)
         // The delegate owns cold rendering; JS retires alerts for active/read rooms.
-        PushDelegates.get(this).schedule(this, content)
+        PushDelegates.get(this).schedule(this, content, message.decrypted)
         NotificationPlugin.instance?.onUnifiedPushMessage(content, instance)
     }
 }

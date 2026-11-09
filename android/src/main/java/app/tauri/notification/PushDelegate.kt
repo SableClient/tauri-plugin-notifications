@@ -5,8 +5,9 @@ import android.content.pm.PackageManager
 
 interface PushDelegate {
     fun isActivation(payload: String): Boolean
-    fun render(context: Context, payload: String)
-    fun schedule(context: Context, payload: String)
+    /** [encrypted] is false for a plain push, whose content anyone who knows the endpoint can forge. */
+    fun render(context: Context, payload: String, encrypted: Boolean = true)
+    fun schedule(context: Context, payload: String, encrypted: Boolean = true)
     fun endpointChanged(context: Context, endpoint: String, p256dh: String?, auth: String?)
     fun endpointChanged(context: Context, instance: String, endpoint: String, p256dh: String?, auth: String?) =
         endpointChanged(context, endpoint, p256dh, auth)
@@ -15,8 +16,8 @@ interface PushDelegate {
 
 object NoPushDelegate : PushDelegate {
     override fun isActivation(payload: String) = false
-    override fun render(context: Context, payload: String) {}
-    override fun schedule(context: Context, payload: String) {}
+    override fun render(context: Context, payload: String, encrypted: Boolean) {}
+    override fun schedule(context: Context, payload: String, encrypted: Boolean) {}
     override fun endpointChanged(context: Context, endpoint: String, p256dh: String?, auth: String?) {}
     override fun record(context: Context, outcome: String) {}
 }

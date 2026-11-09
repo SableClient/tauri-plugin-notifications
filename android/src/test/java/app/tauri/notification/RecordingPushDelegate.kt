@@ -6,6 +6,7 @@ import org.json.JSONObject
 class RecordingPushDelegate : PushDelegate {
     val rendered = mutableListOf<String>()
     val scheduled = mutableListOf<String>()
+    val unencrypted = mutableListOf<String>()
     private val outcomes = mutableMapOf<String, Int>()
     var scheduleFailure: Exception? = null
     var onRender: () -> Unit = {}
@@ -17,14 +18,16 @@ class RecordingPushDelegate : PushDelegate {
         return runCatching { JSONObject(payload).optString("ack_token").isNotEmpty() }.getOrDefault(false)
     }
 
-    override fun render(context: Context, payload: String) {
+    override fun render(context: Context, payload: String, encrypted: Boolean) {
         onRender()
         rendered.add(payload)
+        if (!encrypted) unencrypted.add(payload)
     }
 
-    override fun schedule(context: Context, payload: String) {
+    override fun schedule(context: Context, payload: String, encrypted: Boolean) {
         scheduleFailure?.let { throw it }
         scheduled.add(payload)
+        if (!encrypted) unencrypted.add(payload)
     }
 
     override fun endpointChanged(context: Context, endpoint: String, p256dh: String?, auth: String?) {}

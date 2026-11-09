@@ -61,6 +61,7 @@ class UnifiedPushReceiverTest {
         receiver().onMessage(message("real", decrypted = true), UnifiedPushStateStore.INSTANCE)
 
         assertEquals(listOf("real"), delegate.scheduled)
+        assertTrue(delegate.unencrypted.isEmpty())
     }
 
     @Test
@@ -79,6 +80,7 @@ class UnifiedPushReceiverTest {
         receiver().onMessage(message("plain", decrypted = false), UnifiedPushStateStore.INSTANCE)
 
         assertEquals(listOf("plain"), delegate.scheduled)
+        assertEquals(listOf("plain"), delegate.unencrypted)
     }
 
     @Test
