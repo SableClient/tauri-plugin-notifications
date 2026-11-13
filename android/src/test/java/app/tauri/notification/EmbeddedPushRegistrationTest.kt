@@ -233,6 +233,54 @@ class EmbeddedPushRegistrationTest {
     }
 
     @Test
+    fun fossAutoLeavesGoogleServicesAlone() {
+        assumeTrue(BuildConfig.FLAVOR == "foss")
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        state.useEmbeddedDistributor = false
+        io.mockk.mockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        mockkObject(FcmBridge)
+        try {
+            every { org.unifiedpush.android.connector.UnifiedPush.getSavedDistributor(any()) } returns null
+            every { org.unifiedpush.android.connector.UnifiedPush.getDistributors(any()) } returns listOf(context.packageName)
+            every { FcmBridge.isAvailable(any()) } returns true
+            every { invoke.parseArgs(RegisterPushArgs::class.java) } returns RegisterPushArgs().apply {
+                provider = "auto"
+                vapid = "key"
+                embeddedGatewayUrl = "https://ntfy.sh"
+            }
+            plugin.registerForPushNotifications(invoke)
+            assertEquals("embedded", state.activeProvider)
+        } finally {
+            unmockkObject(FcmBridge)
+            io.mockk.unmockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        }
+    }
+
+    @Test
+    fun choosingFcmRegistersThroughGoogleServicesInEveryFlavour() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        state.useEmbeddedDistributor = false
+        io.mockk.mockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        mockkObject(FcmBridge)
+        try {
+            every { org.unifiedpush.android.connector.UnifiedPush.getSavedDistributor(any()) } returns null
+            every { org.unifiedpush.android.connector.UnifiedPush.saveDistributor(any(), any()) } just Runs
+            every { org.unifiedpush.android.connector.UnifiedPush.register(any(), any(), any(), any(), any()) } just Runs
+            every { FcmBridge.isAvailable(any()) } returns true
+            every { invoke.parseArgs(RegisterPushArgs::class.java) } returns RegisterPushArgs().apply {
+                provider = "fcm"
+                vapid = "key"
+            }
+            plugin.registerForPushNotifications(invoke)
+            verify { org.unifiedpush.android.connector.UnifiedPush.saveDistributor(any(), context.packageName) }
+            verify(exactly = 0) { invoke.reject(any<String>()) }
+        } finally {
+            unmockkObject(FcmBridge)
+            io.mockk.unmockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        }
+    }
+
+    @Test
     fun timeoutRestoresAnExistingExternalRegistration() {
         state.activeProvider = "unifiedpush"
         state.endpoint = "https://ntfy.sh/upprevious?up=1"

@@ -545,7 +545,9 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
     // The permission prompt must not consume the registration timeout.
     schedulePushRegistrationTimeout()
     var distributor = UnifiedPush.getSavedDistributor(activity)
-    val nativeAvailable = registration.provider in setOf(PushProvider.AUTO, PushProvider.FCM) && FcmBridge.isAvailable(activity)
+    val nativeWanted = registration.provider == PushProvider.FCM ||
+      (registration.provider == PushProvider.AUTO && FcmBridge.AUTOMATIC)
+    val nativeAvailable = nativeWanted && FcmBridge.isAvailable(activity)
     val nativeSelected = registration.provider == PushProvider.FCM ||
       (registration.provider == PushProvider.AUTO && !unifiedPushState.useEmbeddedDistributor &&
         nativeAvailable && (distributor == null || distributor == activity.packageName))

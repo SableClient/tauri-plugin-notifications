@@ -632,8 +632,10 @@ android {
 }
 ```
 
-`foss` drops Firebase Cloud Messaging and the embedded FCM distributor, for
-builds shipped through F-Droid or IzzyOnDroid; push then uses UnifiedPush only.
+`foss` drops the proprietary Google Play services library, for builds shipped
+through F-Droid or IzzyOnDroid. Automatic selection then uses UnifiedPush only,
+and the `fcm` provider still works on request wherever Google services or microG
+are installed.
 
 1. The plugin automatically includes required permissions
 2. For custom sounds:
