@@ -500,6 +500,7 @@ class NotificationPlugin(private val activity: Activity): Plugin(activity) {
       invoke.reject("Push registration already in progress")
       return
     }
+    if (provider == PushProvider.AUTO || provider == PushProvider.FCM) unifiedPushState.useEmbeddedDistributor = false
     val distributor = if (provider == PushProvider.FCM) null else UnifiedPush.getSavedDistributor(activity)
 
     val user = args.userId?.takeIf { it.isNotEmpty() }

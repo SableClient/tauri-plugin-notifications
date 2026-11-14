@@ -281,6 +281,34 @@ class EmbeddedPushRegistrationTest {
     }
 
     @Test
+    fun choosingAutomaticOrFcmClearsTheStickyEmbeddedChoice() {
+        assumeTrue(BuildConfig.FLAVOR == "gms")
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        io.mockk.mockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        mockkObject(FcmBridge)
+        try {
+            every { org.unifiedpush.android.connector.UnifiedPush.getSavedDistributor(any()) } returns null
+            every { org.unifiedpush.android.connector.UnifiedPush.saveDistributor(any(), any()) } just Runs
+            every { org.unifiedpush.android.connector.UnifiedPush.register(any(), any(), any(), any(), any()) } just Runs
+            every { FcmBridge.isAvailable(any()) } returns true
+            for (provider in listOf("auto", "fcm")) {
+                state.useEmbeddedDistributor = true
+                every { invoke.parseArgs(RegisterPushArgs::class.java) } returns RegisterPushArgs().apply {
+                    this.provider = provider
+                    vapid = "key"
+                }
+                plugin.registerForPushNotifications(invoke)
+                assertFalse(state.useEmbeddedDistributor, provider)
+                verify { org.unifiedpush.android.connector.UnifiedPush.saveDistributor(any(), context.packageName) }
+                plugin.onWebViewGone()
+            }
+        } finally {
+            unmockkObject(FcmBridge)
+            io.mockk.unmockkStatic(org.unifiedpush.android.connector.UnifiedPush::class)
+        }
+    }
+
+    @Test
     fun timeoutRestoresAnExistingExternalRegistration() {
         state.activeProvider = "unifiedpush"
         state.endpoint = "https://ntfy.sh/upprevious?up=1"
